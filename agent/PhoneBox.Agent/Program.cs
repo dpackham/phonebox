@@ -558,7 +558,7 @@ app.MapPost("/api/phone-mic/setup", async (ConfigStore cfg, CancellationToken ct
 app.MapPost("/api/phone/open", async (AdbReverse adb) => { await adb.OpenPanelAsync(); return Results.Ok(); });
 
 // Widget types and page templates for the settings page's layout editor.
-app.MapGet("/api/catalog", () => Results.Text($"{{\"cols\":{Catalog.Cols},\"rows\":{Catalog.Rows},\"widgets\":{Catalog.WidgetsJson},\"templates\":{Catalog.TemplatesJson}}}",
+app.MapGet("/api/catalog", () => Results.Text($"{{\"cols\":{Catalog.Cols},\"rows\":{Catalog.Rows},\"maxRows\":{Catalog.MaxRows},\"widgets\":{Catalog.WidgetsJson},\"templates\":{Catalog.TemplatesJson}}}",
     "application/json; charset=utf-8"));
 
 // ---------------------------------------------------------------- webhook API: push data and events into the panel
@@ -733,6 +733,10 @@ app.MapGet("/api/discord", (DiscordMonitor dc, ConfigStore cfg) => Results.Json(
     snapshot = dc.Snapshot(),
     control = DiscordMonitor.ControlAllowed(cfg.Get()),
     share = DiscordMonitor.ShareWanted(cfg.Get()),
+    // the current-channel bar: whether you share (its Live badge and Stop), and whether join and the input mode are
+    // allowed beyond its own Control option (mute, deafen and leave only)
+    shareState = DiscordMonitor.ShareStateWanted(cfg.Get()),
+    joinControl = DiscordMonitor.ControlAllowed(cfg.Get(), "join"),
     widgetControl = DiscordMonitor.WidgetControl(cfg.Get()),
     chat = DiscordMonitor.ChatWanted(cfg.Get()),
     chatUnread = dc.ChatUnread(),

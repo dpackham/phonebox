@@ -129,11 +129,540 @@ W.obs = {
   },
 };
 
+// ---- Discord "side by side" layout ----------------------------------------------------------------------------
+const dcImg = (kind, id, hash) => `${API}/discord/img?kind=${kind}&id=${encodeURIComponent(id)}&hash=${encodeURIComponent(hash)}`;
+// a round logo: the image once it has loaded, the first letter until then (and when there is no image)
+const dcIco = (src, name, cls) => {
+  const w = h('span', cls, (name || '?').trim().charAt(0).toUpperCase() || '?');
+  if (src) { const im = new Image(); im.alt = ''; im.onload = () => w.replaceChildren(im); im.src = src; }
+  return w;
+};
+const dcGid = (c) => c.guildId || c.guild || 'other';
+// servers picked or joined lately, newest first: the focus layout shows them next to the server switcher
+const dcRecent = (gid) => { if (gid) store.set('dc-recent', [gid, ...store.get('dc-recent', []).filter((g) => g !== gid)].slice(0, 6)); return store.get('dc-recent', []); };
+// Discord mutes the microphone while you are deafened, so the mic shows off then too
+const dcCall = (kind, s) => {
+  const on = kind === 'mute' ? s.muted || s.deafened : kind === 'deafen' ? s.deafened : false;
+  const ic = kind === 'mute' ? (on ? 'mic-off' : 'mic') : kind === 'deafen' ? (on ? 'headphone-off' : 'headphones') : 'log-out';
+  const label = t(kind === 'mute' ? (on ? 'w.discord.micOff' : 'w.discord.mic') : kind === 'deafen' ? (on ? 'w.discord.soundOff' : 'w.discord.sound') : 'w.discord.leave');
+  return { on, ic, label };
+};
+// A voice action, with a deadline over the request and its answer: a stalled one must not leave the buttons busy. It is
+// never sent again by itself (it toggles); the caller reads the state afresh instead.
+const dcPost = async (path) => {
+  const ctl = new AbortController();
+  let timer;
+  const deadline = new Promise((_, fail) => { timer = setTimeout(() => { ctl.abort(); fail(new Error('timeout')); }, 8000); });
+  try {
+    await Promise.race([deadline, (async () => {
+      const r = await fetch(`${API}/discord/${path}`, { method: 'POST', cache: 'no-store', headers: PANEL_HEADERS, signal: ctl.signal });
+      if (!r.ok) toast((await r.json().catch(() => ({}))).error || t('w.discord.failed'), 'err');
+    })()]);
+  } catch (_) { toast(t('panel.pcNoAnswer'), 'err'); } finally { clearTimeout(timer); }
+};
+// what the agent's share error codes mean (DiscordShareError.Code)
+const DC_SHARE_ERRORS = { off: 'w.discord.shareOff', notAllowed: 'w.discord.shareApprove', unknown: 'w.discord.shareUnknown', noCall: 'w.discord.shareJoin',
+  sharing: 'w.discord.shareAlready', gone: 'w.discord.shareGone', notDirect: 'w.discord.shareNotDirect' };
+// Start ("app" with a pid, "pick" for Discord's own picker on the computer) or stop a share. Never sent twice by
+// itself: the same command starts and stops.
+const dcShareAct = async (action, pid) => {
+  const ctl = new AbortController();
+  let timer;
+  const deadline = new Promise((_, fail) => { timer = setTimeout(() => { ctl.abort(); fail(new Error('timeout')); }, 12000); });
+  try {
+    await Promise.race([deadline, (async () => {
+      const r = await fetch(`${API}/discord/share/${action}` + (pid ? '?pid=' + pid : ''), { method: 'POST', cache: 'no-store', headers: PANEL_HEADERS, signal: ctl.signal });
+      if (r.ok) return;
+      const { code } = await r.json().catch(() => ({}));
+      toast(t(DC_SHARE_ERRORS[code] || 'w.discord.failed'), 'err');
+    })()]);
+  } catch (_) { toast(t('panel.pcNoAnswer'), 'err'); } finally { clearTimeout(timer); }
+};
+const dcLive = () => h('span', 'dcf-badge', t('w.discord.live'));
+const dcVisible = (box, page) => box.isConnected && !document.hidden && pages[curPage] === page && !box.closest('.stack-item:not(.active)');
+
+// The Discord widget's "side by side" layout (layout: focus), sized for a tablet or a large widget: on the left the server switcher (with the
+// servers used lately), the channel you are in with who is there, and round call buttons (mic, sound, screen share,
+// chat, leave); on the right tabs for the chosen server's voice channels, the chat and the screen share. Uses the same
+// agent endpoints as the list layout.
+const dcFocus = {
+  create(box, { o, page }) {
+    box.classList.add('dcf');
+    let data = null, lastKey = '', busy = null;
+    let sel = null, picking = false, seenChannel = null, lastView = '';
+    let tab = 'chan', share = null, shareBusy = null, shareWaiting = 0, shareNext = 0;
+    let chat = null, chatPick = false, pickGuild = null, chatAsked = 0, chatWaiting = 0, chatNext = 0;
+    const load = async () => { try { data = await api('/discord'); } catch (_) {} };
+    const act = async (action, channel) => {
+      if (busy) return; // one press at a time: a double tap must not toggle twice
+      haptic();
+      busy = action + (channel || ''); render(true);
+      await dcPost(action + (channel ? '?channel=' + encodeURIComponent(channel) : ''));
+      await new Promise((done) => setTimeout(done, 600));
+      await load(); busy = null; render(true);
+    };
+    // The state is asked for beside the window list: an answer older than one already used is dropped, and a state-only
+    // answer keeps the list it doesn't carry.
+    let shareAsked = 0, shareUsed = 0;
+    const loadShare = async (apps) => {
+      const n = ++shareAsked;
+      shareWaiting++;
+      try {
+        const r = await api('/discord/share' + (apps ? '?apps=true' : ''), undefined, 8000);
+        if (n > shareUsed) {
+          shareUsed = n;
+          // an app list that comes back after the share tab was left keeps only the state: no name, no apps
+          share = apps && tab === 'share' ? r : { ...r, name: apps ? null : r.name, apps: apps ? null : share?.apps ?? null };
+        }
+      } catch (_) {} finally { shareWaiting--; }
+    };
+    const loadChat = async () => {
+      const n = ++chatAsked; // only the newest answer counts: an older one may be for another server or channel
+      const forGuild = chatPick ? pickGuild : null;
+      chatWaiting++;
+      try {
+        const c = await api('/discord/chat' + (chatPick ? '?picker=true' + (pickGuild ? '&guild=' + encodeURIComponent(pickGuild) : '') : ''), undefined, 8000);
+        if (n === chatAsked) chat = { ...c, forGuild };
+      } catch (_) {} finally { chatWaiting--; }
+    };
+    const openTab = (to) => {
+      // leaving the share view: the shared app's name and the window list are not kept around
+      if (tab === 'share' && to !== 'share' && share) share = { ...share, name: null, apps: null };
+      tab = to; picking = false; chatPick = false; pickGuild = null;
+      if (to === 'chat') { chat = null; loadChat().then(() => render(true)); }
+      if (to === 'share') loadShare(true).then(() => render(true));
+      render(true);
+    };
+    const shareAct = async (action, pid) => {
+      if (shareBusy) return;
+      haptic();
+      shareBusy = action + (pid || ''); render(true);
+      await dcShareAct(action, pid);
+      shareBusy = null;
+      // the window list only while the share tab is on screen; off screen the next visit asks for it
+      await loadShare(tab === 'share' && visible());
+      render(true);
+    };
+    const chooseChat = async (channel) => {
+      haptic();
+      chatPick = false; pickGuild = null;
+      try { await api('/discord/chat/choose?channel=' + encodeURIComponent(channel), 'POST', 5000); } catch (_) { toast(t('w.discord.failed'), 'err'); }
+      // reading marks the messages seen: only while the chat is on screen; otherwise the poll reads it on return
+      if (tab === 'chat' && visible()) await loadChat();
+      render(true);
+    };
+    const when = (ms) => {
+      if (!ms) return '';
+      const d = new Date(ms), now = new Date();
+      const time = d.toLocaleTimeString(LOCALE, { hour: '2-digit', minute: '2-digit' });
+      return d.toDateString() === now.toDateString() ? time : d.toLocaleDateString(LOCALE, { day: 'numeric', month: 'short' }) + ' ' + time;
+    };
+    const note = (text) => h('div', 'dcf-note', text);
+    const visible = () => dcVisible(box, page);
+    // Who is speaking changes several times a second: that only moves the ring on the chips already drawn.
+    const rings = new Map();
+    const ring = () => { for (const m of data?.snapshot?.members || []) rings.get(m.id)?.classList.toggle('speaking', !!m.speaking); };
+
+    const chatPanel = () => {
+      const c = chat;
+      if (!c) return [note(t('w.loading'))];
+      if (!c.enabled) return [note(t('w.discord.chatOff'))];
+      if (!c.ready) return [note(c.error || t('w.discord.chatApprove'))];
+      const head = h('button', 'dcf-pick' + (chatPick ? ' open' : ''), icon(c.voice ? 'volume-2' : 'hash'),
+        h('span', null, c.channel ? (c.voice ? t('w.discord.voiceChat') + ' · ' : '') + (c.channel.name || '') : t('w.discord.pickChannel')), icon('chevron-down'));
+      head.addEventListener('click', () => { haptic(); chatPick = !chatPick; pickGuild = null; loadChat().then(() => render(true)); render(true); });
+      const bar = h('div', 'dcf-chatbar', head, h('span', 'dcf-ro', t('w.discord.readOnly')));
+      if (data?.widgetControl && c.channel) {
+        const open = labelled(h('button', 'dcf-open', icon('external-link'), h('span', null, t('w.discord.openInDiscord'))), t('w.discord.openInDiscord'));
+        open.addEventListener('click', async () => { haptic(); try { await api('/discord/chat/open', 'POST', 5000); } catch (_) { toast(t('w.discord.failed'), 'err'); } });
+        bar.append(open);
+      }
+      if (chatPick) {
+        const rows = [];
+        const dot = (on) => (on ? h('span', 'dcf-dot') : null);
+        if (!pickGuild) {
+          const v = h('button', 'dcf-prow' + (c.voice ? ' cur' : ''), icon('volume-2'), h('span', null, t('w.discord.voiceChat') + (c.callName ? ': ' + c.callName : '')));
+          v.addEventListener('click', () => chooseChat('voice'));
+          rows.push(v);
+          for (const g of c.servers || []) {
+            const b = h('button', 'dcf-prow', dcIco(g.icon && dcImg('guild', g.id, g.icon), g.name, 'dcf-av'), h('span', null, g.name), dot(g.unread), icon('chevron-right'));
+            b.addEventListener('click', () => { haptic(); pickGuild = g.id; loadChat().then(() => render(true)); render(true); });
+            rows.push(b);
+          }
+        } else {
+          const back = h('button', 'dcf-prow back', icon('arrow-left'), h('span', null, (c.servers || []).find((g) => g.id === pickGuild)?.name || ''));
+          back.addEventListener('click', () => { haptic(); pickGuild = null; render(true); });
+          rows.push(back);
+          // until the answer for this server is in, another server's channels must not show under its name
+          const channels = c.forGuild === pickGuild ? c.channels : null;
+          if (!channels) rows.push(note(t('w.loading')));
+          for (const ch of channels || []) {
+            const b = h('button', 'dcf-prow' + (!c.voice && c.channel?.id === ch.id ? ' cur' : ''), icon('hash'), h('span', null, ch.name), dot(ch.unread));
+            b.addEventListener('click', () => chooseChat(ch.id));
+            rows.push(b);
+          }
+        }
+        return [bar, h('div', 'dcf-plist', ...rows)];
+      }
+      if (!c.channel) return [bar, note(t('w.discord.pickChannel'))];
+      if (c.picker) return [bar, note(t('w.loading'))]; // the picker just closed: its answer holds no messages
+      const msgs = c.messages || [];
+      const list = h('div', 'dcf-msgs', ...msgs.map((m, i) => {
+        const same = i > 0 && msgs[i - 1].authorId === m.authorId && m.ts - msgs[i - 1].ts < 5 * 60000;
+        const name = h('b', null, m.author + (m.bot ? ' 🤖' : ''));
+        if (m.color) name.style.color = m.color;
+        const extra = [m.attachments ? '📎 ' + m.attachments : '', !m.text && m.embed ? '🔗 ' + m.embed : ''].filter(Boolean).join(' · ');
+        return h('div', 'dcf-msg' + (same ? ' cont' : ''), same ? h('span', 'dcf-mgap') : dcIco(m.avatar && m.authorId && dcImg('user', m.authorId, m.avatar), m.author, 'dcf-mav'),
+          h('div', 'dcf-mb', same ? null : h('div', 'dcf-who', name, h('small', null, when(m.ts))), m.text ? h('div', 'dcf-mt', m.text) : null, extra ? h('div', 'dcf-mx', extra) : null));
+      }));
+      if (!msgs.length) list.append(note(t('w.discord.noMessages')));
+      return [bar, list];
+    };
+
+    const sharePanel = () => {
+      const c = share;
+      if (!c) return [note(t('w.loading'))];
+      if (!c.enabled) return [note(t('w.discord.shareOff'))];
+      if (!c.ready) return [note(c.refused ? t('w.discord.shareRefused') : c.error || t('w.discord.shareApprove'))];
+      if (c.active === null) return [note(t('w.discord.shareUnknown'))];
+      if (c.active) {
+        const stop = h('button', 'dcf-stop' + (shareBusy === 'stop' ? ' busy' : ''), icon('screen-share-off'), h('span', null, t('w.discord.shareStop')));
+        if (!shareBusy) stop.addEventListener('click', () => shareAct('stop')); else stop.disabled = true;
+        return [h('div', 'dcf-livebox', dcLive(), h('div', 'dcf-lt', h('b', null, c.name ? t('w.discord.sharing', { name: c.name }) : t('w.discord.sharingNow'))), stop)];
+      }
+      const out = [];
+      if (!c.inCall) out.push(note(t('w.discord.shareJoin')));
+      const pick = h('button', 'dcf-pickpc' + (shareBusy === 'pick' ? ' busy' : ''), icon('monitor'), h('span', null, t('w.discord.sharePick')));
+      if (c.inCall && !shareBusy) pick.addEventListener('click', () => shareAct('pick')); else pick.disabled = true;
+      out.push(pick);
+      if (c.apps?.length) {
+        out.push(h('div', 'dcf-shint', t('w.discord.shareHint')));
+        out.push(h('div', 'dcf-grid', ...c.apps.map((a) => {
+          const b = h('button', 'dcf-app' + (shareBusy === 'app' + a.pid ? ' busy' : ''), h('span', 'dcf-appi', (a.name || '?').trim().charAt(0).toUpperCase()), h('span', null, a.name));
+          if (c.inCall && !shareBusy) b.addEventListener('click', () => shareAct('app', a.pid)); else b.disabled = true;
+          return b;
+        })));
+      }
+      return out;
+    };
+
+    const renderFocus = (s, ctl) => {
+      const joinControl = data.joinControl ?? ctl;
+      // screen share switched off (or the Discord widget's Control): nothing of it is kept, the shared app's name included
+      if (!data.share) share = null;
+      const servers = new Map();
+      for (const c of s.channels) { const g = dcGid(c); if (!servers.has(g)) servers.set(g, []); servers.get(g).push(c); }
+      const here = s.channelId ? s.channels.find((c) => c.id === s.channelId) : null;
+      // Discord lists the channels one server at a time: until the one you are in has come in, it is looked for again
+      if (s.channelId !== seenChannel && (here || !s.channelId)) {
+        seenChannel = s.channelId;
+        if (here) { sel = dcGid(here); dcRecent(sel); store.set('dc-last', { id: here.id }); }
+      }
+      if (!sel || !servers.has(sel)) sel = dcRecent().find((g) => servers.has(g)) || servers.keys().next().value || null;
+      const sname = (gid) => servers.get(gid)?.[0]?.guild || t('w.discord.otherServer');
+      const gico = (gid) => { const c = servers.get(gid)?.[0]; return dcIco(c?.guildIcon && c?.guildId && dcImg('guild', c.guildId, c.guildIcon), sname(gid), 'dcf-sico'); };
+      const pick = (gid) => { haptic(); sel = gid; picking = false; dcRecent(gid); render(true); };
+      const switcher = h('button', 'dcf-switch' + (picking ? ' open' : ''), sel ? gico(sel) : null, h('span', 'dcf-sname', sel ? sname(sel) : t('w.discord.servers')), icon('chevron-down'));
+      // through openTab, so leaving the share tab for the server list drops the shared app's name and the app list too
+      switcher.addEventListener('click', () => { haptic(); const open = !picking; openTab('chan'); picking = open; render(true); });
+      const recents = dcRecent().filter((g) => g !== sel && servers.has(g)).slice(0, 3).map((g) => {
+        const b = labelled(h('button', 'dcf-recent', gico(g)), sname(g));
+        b.addEventListener('click', () => pick(g));
+        return b;
+      });
+      const live = !!(s.channelId && share?.active);
+      // Push to talk without a key in Discord: nobody hears you. Say so, as the list layout does, with the way back to
+      // voice activity when the widget may switch the input mode.
+      const ptt = () => {
+        if (s.inputMode !== 'PUSH_TO_TALK' || s.pttKey) return null;
+        const fix = joinControl ? h('button', 'dcf-warnbtn' + (busy === 'inputmode' ? ' busy' : ''), t('w.a.useVoiceActivity')) : null;
+        if (fix) { if (!busy) fix.addEventListener('click', () => act('inputmode')); else fix.disabled = true; }
+        return h('div', 'dcf-warn', h('span', null, t('w.discord.pttNoKey')), fix);
+      };
+      let mid;
+      if (s.channelId) {
+        mid = h('div', 'dcf-now', h('span', 'dcf-label', t('w.discord.voiceChannel'), live ? dcLive() : null), h('div', 'dcf-name', s.channelName || ''),
+          h('div', 'dcf-chips', ...s.members.map((m) => {
+            const chip = h('span', 'dcf-chip' + (m.speaking ? ' speaking' : '') + (m.deafened ? ' deaf' : m.muted ? ' muted' : ''),
+              dcIco(m.avatar && dcImg('user', m.id, m.avatar), m.name, 'dcf-av'), h('span', null, m.name));
+            rings.set(m.id, chip);
+            return chip;
+          })),
+          live ? h('div', 'dcf-hint', share.name ? t('w.discord.sharing', { name: share.name }) : t('w.discord.sharingNow')) : null,
+          ptt());
+      } else {
+        // only the id is kept on the phone; the name comes from the list Discord sends. Like the channel tiles, the way
+        // back follows the Channels option.
+        const lastId = store.get('dc-last', null)?.id;
+        const last = o.channels !== false && lastId ? s.channels.find((c) => c.id === lastId) : null;
+        const back = last ? h('button', 'dcf-back', icon('rotate-ccw'), h('span', null, t('w.discord.backTo', { name: last.name + (last.guild ? ' · ' + last.guild : '') }))) : null;
+        if (back) { if (joinControl && !busy) back.addEventListener('click', () => act('join', last.id)); else back.disabled = true; }
+        mid = h('div', 'dcf-empty', h('span', 'dcf-eico', icon('volume-x')), h('div', 'dcf-name', t('w.discord.notInChannel')),
+          h('div', 'dcf-hint', t('w.discord.tapToJoin')), back);
+      }
+      const call = (kind) => {
+        const { on, ic, label } = dcCall(kind, s);
+        const b = labelled(h('button', `dcf-call ${kind}` + (on ? ' on' : '') + (busy === kind ? ' busy' : ''), h('span', 'dcf-disc', icon(ic)), h('span', 'dcf-cl', label)), label);
+        if (ctl && !busy && (kind !== 'leave' || s.channelId)) b.addEventListener('click', () => act(kind)); else b.disabled = true;
+        return b;
+      };
+      // Screen and Chat open their tab on the right; a second tap goes back to the channels
+      const tabCall = (kind) => {
+        const on = kind === 'share' && live;
+        const label = t(kind === 'share' ? (on ? 'w.discord.live' : 'w.discord.screen') : 'w.discord.chat');
+        const b = labelled(h('button', `dcf-call ${kind}` + (tab === kind ? ' sel' : '') + (on ? ' live' : ''),
+          h('span', 'dcf-disc', icon(kind === 'share' ? 'screen-share' : 'message-square')), h('span', 'dcf-cl', label),
+          kind === 'chat' && data.chatUnread && tab !== 'chat' ? h('span', 'dcf-dot') : null), kind === 'share' ? t('w.discord.share') : label);
+        b.addEventListener('click', () => { haptic(); openTab(tab === kind ? 'chan' : kind); });
+        return b;
+      };
+      const hasShare = !!data.share, hasChat = !!data.chat;
+      if ((tab === 'share' && !hasShare) || (tab === 'chat' && !hasChat)) tab = 'chan';
+      const calls = [call('mute'), call('deafen'), hasShare ? tabCall('share') : null, hasChat ? tabCall('chat') : null, call('leave')].filter(Boolean);
+      // with the Channels option off there are no servers to pick, as in the list layout
+      const showChannels = o.channels !== false;
+      if (!showChannels) picking = false;
+      const left = h('div', 'dcf-left', showChannels ? h('div', 'dcf-top', switcher, ...recents) : null, mid,
+        h('div', 'dcf-calls' + (calls.length > 3 ? ' many' : ''), ...calls));
+      const tabs = hasShare || hasChat ? h('div', 'dcf-tabs', ...[['chan', 'w.discord.channelsTab'], hasChat && ['chat', 'w.discord.chat'], hasShare && ['share', 'w.discord.share']]
+        .filter(Boolean).map(([k, key]) => {
+          const b = h('button', 'dcf-tab' + (tab === k ? ' on' : ''), t(key),
+            (k === 'chat' && data.chatUnread && tab !== 'chat') || (k === 'share' && live) ? h('span', 'dcf-dot') : null);
+          b.addEventListener('click', () => { haptic(); openTab(k); });
+          return b;
+        })) : null;
+      let right;
+      if (tab === 'chat') right = h('div', 'dcf-right chat', tabs, ...chatPanel());
+      else if (tab === 'share') right = h('div', 'dcf-right', tabs, ...sharePanel());
+      else if (picking) {
+        right = h('div', 'dcf-right', tabs, h('div', 'dcf-cap', t('w.discord.servers')), h('div', 'dcf-grid', ...[...servers.keys()].map((g) => {
+          const b = h('button', 'dcf-srv' + (g === sel ? ' cur' : ''), gico(g), h('span', null, sname(g)));
+          b.addEventListener('click', () => pick(g));
+          return b;
+        })));
+      } else {
+        // the channel you are in comes first
+        const chans = showChannels ? [...(servers.get(sel) || [])].sort((a, b) => (b.id === s.channelId) - (a.id === s.channelId)) : [];
+        right = h('div', 'dcf-right', tabs, showChannels ? h('div', 'dcf-cap', t('w.discord.channelsOf', { name: sel ? sname(sel) : '' })) : null,
+          showChannels ? h('div', 'dcf-grid', ...chans.map((c) => {
+            const b = h('button', 'dcf-chan' + (c.id === s.channelId ? ' cur' : '') + (busy === 'join' + c.id ? ' busy' : ''), icon('volume-2'), h('span', null, c.name));
+            if (joinControl && !busy && c.id !== s.channelId) b.addEventListener('click', () => act('join', c.id));
+            return b;
+          })) : null);
+        if (o.notifications !== false && s.notifications?.length) {
+          right.append(h('div', 'dcf-notes', ...s.notifications.slice(0, 4).map((n) => h('div', 'dcf-ntf', h('b', null, n.title), h('span', null, n.body)))));
+        }
+      }
+      // keep the chat's place: follow new messages only when it was showing the newest ones
+      const oldList = box.querySelector('.dcf-msgs');
+      const stick = !oldList || oldList.scrollHeight - oldList.scrollTop - oldList.clientHeight < 40;
+      const oldTop = oldList?.scrollTop ?? 0;
+      // Almost any change redraws (a member muting, a notification): the scrolled places stay where they were, as long
+      // as the same view is shown (another tab, or the server list, starts at the top).
+      const view = tab + (picking ? ':servers' : '') + (chatPick ? ':picker:' + (pickGuild || '') : '');
+      const places = view === lastView ? ['.dcf-wrap', '.dcf-right', '.dcf-plist'].map((q) => box.querySelector(q)?.scrollTop ?? 0) : [0, 0, 0];
+      lastView = view;
+      const wrap = h('div', 'dcf-wrap', left, right);
+      box.replaceChildren(wrap);
+      ['.dcf-wrap', '.dcf-right', '.dcf-plist'].forEach((q, i) => { const el = box.querySelector(q); if (el) el.scrollTop = places[i]; });
+      const list = box.querySelector('.dcf-msgs');
+      if (list) list.scrollTop = stick ? list.scrollHeight : oldTop;
+    };
+
+    const render = (force = false) => {
+      const s0 = data?.snapshot;
+      const quiet = s0?.members ? { ...data, snapshot: { ...s0, members: s0.members.map(({ speaking, ...m }) => m) } } : data;
+      const key = JSON.stringify([quiet, busy, box.clientHeight, box.clientWidth, sel, picking, tab, share, shareBusy, tab === 'chat' ? chat : null, chatPick, pickGuild]);
+      if (!force && key === lastKey) { ring(); return; }
+      lastKey = key;
+      rings.clear();
+      if (!data) { box.replaceChildren(h('div', 'empty', t('w.loading'))); return; }
+      if (!data.enabled) { box.replaceChildren(h('div', 'empty', t('w.discord.turnOn'))); return; }
+      const s = data.snapshot;
+      if (!s.connected) { box.replaceChildren(h('div', 'empty', s.error || t('panel.connecting'))); return; }
+      renderFocus(s, data.control);
+    };
+    // In a channel the widget asks every 500 ms so the speaking ring follows the voice; otherwise every 2 s. Off screen
+    // it doesn't ask at all, and catches up within 250 ms of showing.
+    let next = 0, asking = false, shown = false;
+    const poll = () => {
+      const now = visible();
+      if (now && !shown) next = 0;
+      shown = now;
+      if (asking || !now || Date.now() < next) return;
+      asking = true;
+      load().then(() => { asking = false; next = Date.now() + (data?.snapshot?.channelId ? 500 : 2000); render(); });
+    };
+    // the share state every 4 s while in a call (the Live badge), every 2 s with the window list while its tab is open
+    const pollShare = () => {
+      if (!data?.share || shareWaiting || shareBusy || !visible() || Date.now() < shareNext) return;
+      if (tab !== 'share' && !data.snapshot?.channelId) { if (share?.active) { share = null; render(); } return; }
+      shareNext = Date.now() + (tab === 'share' ? 2000 : 4000);
+      loadShare(tab === 'share').then(() => render());
+    };
+    // the open chat every 2 s, only while its tab is on screen
+    const pollChat = () => {
+      if (tab !== 'chat' || chatWaiting || !visible() || Date.now() < chatNext) return;
+      chatNext = Date.now() + 2000;
+      loadChat().then(() => render());
+    };
+    // 'fast' (every 250 ms) drives the asking; 'tick' (every second) also redraws when the widget's size changes
+    return { update: (kind) => {
+      poll(); pollShare(); pollChat();
+      if (kind !== 'fast') render();
+      if (!data?.snapshot?.connected) return;
+      const to = dcTake(page, visible());
+      if ((to === 'share' && data.share) || (to === 'chat' && data.chat)) openTab(to);
+    } };
+
+  },
+};
+
+// ---- Discord current-channel bar ---------------------------------------------------------------------------------
+// The bar asks the Discord widget to open a tab: go to the first page that holds one; only a Discord widget on that
+// page picks the request up, once it is on screen. A Discord widget inside a Smart Stack is not looked for: the stack
+// shows one card at a time, so the request could not say which.
+let dcWant = null;
+const dcOpen = (tab) => {
+  const target = pages.find((p) => (p.widgets || []).some((w) => w.type === 'discord'));
+  if (!target) { toast(t('w.discord.addWidget'), 'err'); return; }
+  dcWant = { tab, page: target };
+  gotoPageRef(pages.indexOf(target) + 1);
+};
+/** The tab the bar asked this widget to open, taken once: only on the page the request was for, and only once it shows. */
+const dcTake = (page, shown) => {
+  if (!dcWant || dcWant.page !== page || !shown) return null;
+  const { tab } = dcWant;
+  dcWant = null;
+  return tab;
+};
+
+// The voice channel you are in as a bar any page can hold: the channel, who is there and mic / sound / screen / chat /
+// leave. Its layout follows its size in the grid (style.css, container queries). Outside a voice channel it hides and
+// the widgets next to it take its cells (reflowPage in main.js), unless "autoHide" is off. Screen and Chat open those
+// tabs of the Discord widget; while you share, Screen stops the share.
+W['discord-bar'] = {
+  needs: ['tick', 'fast'],
+  create(box, { o, page, reflow }) {
+    let data = null, lastKey = '', busy = null;
+    let share = null, shareBusy = false, shareWaiting = false, shareNext = 0;
+    const rings = new Map();
+    const load = async () => { try { data = await api('/discord'); } catch (_) {} };
+    const loadShare = async () => {
+      shareWaiting = true;
+      try { share = await api('/discord/share', undefined, 8000); } catch (_) {} finally { shareWaiting = false; }
+    };
+    const act = async (action) => {
+      if (busy) return;
+      haptic();
+      busy = action; render(true);
+      await dcPost(action);
+      await new Promise((done) => setTimeout(done, 600));
+      await load(); busy = null; render(true);
+    };
+    // after a rebuild (a rotation, a settings save) a late answer must not reflow the old page
+    let destroyed = false;
+    const hide = (v) => { if (!destroyed && box.hidden !== v) { box.hidden = v; reflow?.(); } };
+    // It hides only on a page grid that can give its rows away (a Smart Stack card has no reflow), never in the
+    // settings' live preview, and only once the agent has answered, so it doesn't blink away while the page loads.
+    const canHide = o.autoHide !== false && !!reflow && !PREVIEW;
+    // Out of a channel it was showing (or Discord reconnecting for a moment) it waits a little before it hides, so the
+    // widgets around it don't jump for a blip.
+    const GRACE = 3000;
+    let shownIn = false, awaySince = 0;
+    // Start hidden where it may hide, so the widgets around it don't jump when the first answer says you are not in a
+    // channel; the page gives its rows away once every widget is in place.
+    if (canHide) { box.hidden = true; queueMicrotask(() => { if (!destroyed) reflow(); }); }
+    const render = (force = false) => {
+      const s = data?.snapshot;
+      if (!s?.channelId || !data.enabled || !s.connected) {
+        if (canHide) {
+          if (!data) return; // still hidden until the agent answers
+          if (!shownIn) { lastKey = ''; hide(true); return; }
+          awaySince ||= Date.now();
+          if (Date.now() - awaySince < GRACE) return; // keep what is drawn for now
+          shownIn = false; lastKey = ''; hide(true); return;
+        }
+        lastKey = '';
+        hide(false);
+        box.replaceChildren(h('div', 'empty', !data ? t('w.loading') : !data.enabled ? t('w.discord.turnOn') : !s.connected ? (s.error || t('panel.connecting')) : t('w.discord.notInChannel')));
+        return;
+      }
+      shownIn = true; awaySince = 0;
+      hide(false);
+      const live = !!share?.active;
+      const quiet = { ...s, members: s.members.map(({ speaking, ...m }) => m), notifications: null };
+      const key = JSON.stringify([quiet, data.control, data.share, data.shareState, data.chat, data.chatUnread, busy, live, share?.name, shareBusy]);
+      if (!force && key === lastKey) { for (const m of s.members) rings.get(m.id)?.classList.toggle('speaking', !!m.speaking); return; }
+      lastKey = key;
+      rings.clear();
+      const ctl = data.control;
+      const here = s.channels.find((c) => c.id === s.channelId);
+      const av = (m) => dcIco(m.avatar && dcImg('user', m.id, m.avatar), m.name, 'dcb-av');
+      const chips = s.members.map((m) => h('span', 'dcb-chip' + (m.speaking ? ' speaking' : ''), av(m), h('span', null, m.name)));
+      const stack = s.members.slice(0, 5).map((m) => { const a = av(m); if (m.speaking) a.classList.add('speaking'); return a; });
+      // one ring entry per member: the chip (names shown) or the stacked avatar, whichever the size shows
+      s.members.forEach((m, i) => rings.set(m.id, { classList: { toggle: (c, v) => { chips[i].classList.toggle(c, v); stack[i]?.classList.toggle(c, v); } } }));
+      const btn = (kind) => {
+        const { on, ic, label } = dcCall(kind, s);
+        const b = labelled(h('button', `dcb-btn ${kind}` + (on ? ' on' : '') + (busy === kind ? ' busy' : ''), icon(ic), h('span', 'dcb-l', label)), label);
+        if (ctl && !busy) b.addEventListener('click', () => act(kind)); else b.disabled = true;
+        return b;
+      };
+      let screen = null;
+      if (live) {
+        screen = labelled(h('button', 'dcb-btn share live' + (shareBusy ? ' busy' : ''), icon('screen-share-off'), h('span', 'dcb-l', t('w.discord.shareStop'))), t('w.discord.shareStop'));
+        if (!shareBusy) screen.addEventListener('click', async () => { haptic(); shareBusy = true; render(true); await dcShareAct('stop'); shareBusy = false; await loadShare(); render(true); });
+        else screen.disabled = true;
+      } else if (data.share) {
+        screen = labelled(h('button', 'dcb-btn share', icon('screen-share'), h('span', 'dcb-l', t('w.discord.screen'))), t('w.discord.share'));
+        screen.addEventListener('click', () => { haptic(); dcOpen('share'); });
+      }
+      let chatB = null;
+      if (data.chat) {
+        chatB = labelled(h('button', 'dcb-btn chat', icon('message-square'), h('span', 'dcb-l', t('w.discord.chat')), data.chatUnread ? h('span', 'dcb-dot') : null), t('w.discord.chat'));
+        chatB.addEventListener('click', () => { haptic(); dcOpen('chat'); });
+      }
+      const btns = [btn('mute'), btn('deafen'), screen, chatB, btn('leave')].filter(Boolean);
+      box.replaceChildren(h('div', 'dcb' + (live ? ' live' : ''),
+        h('div', 'dcb-info',
+          h('div', 'dcb-head', icon('volume-2', 'dcb-vi'), h('b', 'dcb-name', s.channelName || ''), live ? h('span', 'dcb-badge', t('w.discord.live')) : null, here?.guild ? h('span', 'dcb-guild', here.guild) : null),
+          h('div', 'dcb-chips', ...chips),
+          h('div', 'dcb-stack', ...stack, s.members.length > 5 ? h('span', 'dcb-av dcb-more', '+' + (s.members.length - 5)) : null)),
+        h('div', 'dcb-btns n' + btns.length, ...btns)));
+    };
+    const visible = () => dcVisible(box, page);
+    let next = 0, asking = false, shown = false;
+    const poll = () => {
+      const now = visible();
+      if (now && !shown) next = 0;
+      shown = now;
+      if (asking || !now || Date.now() < next) return;
+      asking = true;
+      load().then(() => { asking = false; next = Date.now() + (data?.snapshot?.channelId ? 500 : 2000); render(); });
+    };
+    // the share state every 4 s while in a call, for the Live badge and the stop button
+    const pollShare = () => {
+      // shareState: the bar's own Control is enough to see whether you share and to stop it
+      if (!(data?.shareState ?? data?.share) || !data.snapshot?.channelId) { share = null; return; }
+      if (shareWaiting || shareBusy || !visible() || Date.now() < shareNext) return;
+      shareNext = Date.now() + 4000;
+      loadShare().then(() => render());
+    };
+    // 'fast' also counts down the grace period before hiding
+    return { update: (kind) => { if (destroyed) return; poll(); pollShare(); if (kind !== 'fast' || awaySince) render(); }, destroy: () => { destroyed = true; } };
+  },
+};
+
+
 // Discord through the desktop app on the PC: the voice channel / call you are in, who is there, mute / deafen / leave,
 // voice channels to join and recent notifications. Buttons only work when the widget allows control.
 W.discord = {
   needs: ['tick', 'fast'],
-  create(box, { o, page, w }) {
+  create(box, ctx) {
+    // "focus" (Side by side, a choice) is its own body above; "list", the default, is below
+    if (ctx.o.layout === 'focus') return dcFocus.create(box, ctx);
+    const { o, page, w } = ctx;
     let data = null, lastKey = '', busy = null;
     const open = new Set(); // servers whose channels are unfolded
     // Favourite servers and voice channels, picked on the phone (★): saved in this widget's options on the computer.
@@ -370,7 +899,8 @@ W.discord = {
         const b = labelled(h('button', 'dc-btn ' + cls + (on ? ' on' : '') + (busy === action ? ' busy' : ''), label),
           t({ mute: on ? 'w.a.unmuteMic' : 'w.a.muteMic', deafen: on ? 'w.a.undeafen' : 'w.a.deafen', leave: 'w.a.leave',
             inputmode: on ? 'w.a.useVoiceActivity' : 'w.a.usePushToTalk' }[action]));
-        if (ctl && !busy) b.addEventListener('click', () => act(action)); else b.disabled = true;
+        // joining and the input mode need more than the current-channel bar's option (mute, deafen and leave only)
+        if ((action === 'inputmode' ? data.joinControl ?? ctl : ctl) && !busy) b.addEventListener('click', () => act(action)); else b.disabled = true;
         return b;
       };
       let chatBtn = null;
@@ -464,7 +994,7 @@ W.discord = {
           if (isOpen) {
             block.append(h('div', 'dc-chans', ...chans.map((c) => {
               const b = h('button', 'dc-chan' + (c.id === s.channelId ? ' cur' : '') + (busy === 'join' + c.id ? ' busy' : ''), rich('🔊 ' + c.name));
-              if (!editing && ctl && !busy && c.id !== s.channelId) b.addEventListener('click', () => act('join', c.id));
+              if (!editing && (data.joinControl ?? ctl) && !busy && c.id !== s.channelId) b.addEventListener('click', () => act('join', c.id));
               else if (editing) b.disabled = true;
               // who is in the channel (the agent reads it for favourites only)
               const people = c.people?.length ? h('div', 'dc-people', ...c.people.map((m) =>
@@ -511,7 +1041,14 @@ W.discord = {
       loadChat().then(() => render());
     };
     // 'fast' (every 250 ms) drives the asking; 'tick' (every second) also redraws when the widget's size changes
-    return { update: (kind) => { poll(); pollShare(); pollChat(); if (kind !== 'fast') render(); } };
+    // the current-channel bar's Screen and Chat buttons: open that view, one at a time as the buttons above do
+    const wanted = () => {
+      if (box.closest('.stack-item')) return; // the request is for a Discord widget on the page itself, not a stack card
+      const to = data && dcTake(page, visible());
+      if (to === 'share' && data.share) { shareOpen = true; chatOpen = false; picking = false; pickGuild = null; share = null; loadShare().then(() => render(true)); render(true); }
+      if (to === 'chat' && data.chat) { chatOpen = true; shareOpen = false; picking = false; pickGuild = null; chat = null; loadChat().then(() => render(true)); render(true); }
+    };
+    return { update: (kind) => { poll(); pollShare(); pollChat(); wanted(); if (kind !== 'fast') render(); } };
   },
 };
 

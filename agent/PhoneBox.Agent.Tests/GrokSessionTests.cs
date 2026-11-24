@@ -55,12 +55,14 @@ public sealed class GrokSessionTests : IDisposable
     {
         var dir = SessionDir();
         Write(dir, "summary.json", Summary());
-        Write(dir, "events.jsonl", Event("turn_started") + Event("turn_ended", "outcome", "completed"));
+        var stamp = DateTime.UtcNow.AddMinutes(-1);
+        Write(dir, "events.jsonl", Event("turn_started") + Event("turn_ended", "outcome", "completed"), stamp);
         var done = Assert.Single(_monitor.ReadGrok(_root, (_, _) => false));
         Assert.Equal("idle", done.Status);
         Assert.Equal("completed", done.Outcome);
 
-        Write(dir, "events.jsonl", Event("turn_started") + Event("turn_ended", "outcome", "cancelled"));
+        // Both outcomes have the same length, and the file can keep the same modification time.
+        Write(dir, "events.jsonl", Event("turn_started") + Event("turn_ended", "outcome", "cancelled"), stamp);
         var stopped = Assert.Single(_monitor.ReadGrok(_root, (_, _) => true));
         Assert.Equal("idle", stopped.Status);
         Assert.Equal("aborted", stopped.Outcome);

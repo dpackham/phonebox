@@ -30,7 +30,7 @@ public sealed partial class SessionMonitor
     private readonly record struct GrokTail(bool Open, bool Waiting, string? Outcome, string? LastTool, long? TurnStartedAt);
     private sealed record GrokParsed(string Project, long Since, long StartedAt, string? Model, string? Effort,
         long? TotalTokens, long? InputTokens, long? OutputTokens, long? CachedInputTokens, long? ReasoningTokens,
-        long? LastInputTokens, long? ContextWindow, GrokTail Tail);
+        long? LastInputTokens, long? ContextWindow);
 
     /// <summary>
     /// Recent Grok CLI sessions under <paramref name="homeDir"/> (or <c>GROK_HOME</c>, or <c>~/.grok</c>).
@@ -85,7 +85,8 @@ public sealed partial class SessionMonitor
             {
                 live.TryGetValue(id, out var running);
                 var runningNow = running.Pid > 0 && alive(running.Pid, running.PidStart);
-                session = GrokSession(ParsedGrok(dir), id, runningNow ? running.Pid : null, newest);
+                var tail = ReadGrokTail(Path.Combine(dir, "events.jsonl"));
+                session = GrokSession(ParsedGrok(dir), tail, id, runningNow ? running.Pid : null, newest);
             }
             catch { /* one session being written must not drop the rest */ }
             if (session is not null) yield return session;
@@ -95,7 +96,7 @@ public sealed partial class SessionMonitor
     /// <summary>The parsed metadata of one session folder, read again only when one of its files changed.</summary>
     private GrokParsed ParsedGrok(string dir)
     {
-        var stamp = string.Join('|', new[] { "summary.json", "usage.json", "signals.json", "events.jsonl" }.Select(name =>
+        var stamp = string.Join('|', new[] { "summary.json", "usage.json", "signals.json" }.Select(name =>
         {
             var info = new FileInfo(Path.Combine(dir, name));
             return info.Exists ? $"{info.LastWriteTimeUtc.Ticks}:{info.Length}" : "-";
@@ -107,11 +108,11 @@ public sealed partial class SessionMonitor
     }
 
     /// <summary>Status depends on the clock and the running process, so it is worked out on every pass.</summary>
-    private static AgentSession GrokSession(GrokParsed p, string id, int? pid, DateTime newest)
+    private static AgentSession GrokSession(GrokParsed p, GrokTail tail, string id, int? pid, DateTime newest)
     {
         var fresh = DateTime.UtcNow - newest < GrokBusyWindow;
-        var waiting = p.Tail.Open && p.Tail.Waiting && pid is not null;
-        var status = waiting ? "waiting" : p.Tail.Open && fresh ? "busy" : "idle";
+        var waiting = tail.Open && tail.Waiting && pid is not null;
+        var status = waiting ? "waiting" : tail.Open && fresh ? "busy" : "idle";
         return new AgentSession(
             Id: "grok:" + id,
             Tool: "grok",
@@ -131,9 +132,9 @@ public sealed partial class SessionMonitor
             ReasoningTokens: p.ReasoningTokens,
             LastInputTokens: p.LastInputTokens,
             ContextWindow: p.ContextWindow,
-            TurnStartedAt: p.Tail.Open ? p.Tail.TurnStartedAt : null,
-            Outcome: p.Tail.Open ? null : GrokOutcome(p.Tail.Outcome),
-            LastTool: GrokLabel(p.Tail.LastTool, 64));
+            TurnStartedAt: tail.Open ? tail.TurnStartedAt : null,
+            Outcome: tail.Open ? null : GrokOutcome(tail.Outcome),
+            LastTool: GrokLabel(tail.LastTool, 64));
     }
 
     private static GrokParsed ParseGrokSession(string dir)
@@ -166,8 +167,7 @@ public sealed partial class SessionMonitor
             CachedInputTokens: NonNeg(Long(session, "cachedReadTokens")),
             ReasoningTokens: NonNeg(Long(session, "reasoningTokens")),
             LastInputTokens: NonNeg(Long(lastTurn, "inputTokens")),
-            ContextWindow: NonNeg(Long(signalsRoot, "contextWindowTokens")),
-            Tail: ReadGrokTail(Path.Combine(dir, "events.jsonl")));
+            ContextWindow: NonNeg(Long(signalsRoot, "contextWindowTokens")));
     }
 
     private static JsonElement LastGrokTurn(JsonElement usage)

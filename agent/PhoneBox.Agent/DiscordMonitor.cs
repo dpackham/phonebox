@@ -155,6 +155,7 @@ public sealed partial class DiscordMonitor(ConfigStore config, ILogger<DiscordMo
 
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
+        _life = ct;
         string? lastError = null;
         (string? Id, string? Secret)? refusedFor = null;
         var failures = 0;
@@ -191,6 +192,7 @@ public sealed partial class DiscordMonitor(ConfigStore config, ILogger<DiscordMo
         if (string.IsNullOrWhiteSpace(cfg.ClientId) || string.IsNullOrWhiteSpace(cfg.ClientSecret))
             throw new Exception("Enter the application's client ID and secret (Settings › General › Discord)");
         await using var io = await OpenIpc(ct);
+        _ipcProcess = IpcProcess(io);
         // handshake
         await WriteFrame(io, 0, new JsonObject { ["v"] = 1, ["client_id"] = cfg.ClientId }, ct);
         var ready = (await ReadFrame(io, ct))?.Body ?? throw new IOException("Discord closed the connection");
@@ -722,13 +724,13 @@ public sealed partial class DiscordMonitor(ConfigStore config, ILogger<DiscordMo
     /// </summary>
     public async Task<string?> ActAsync(string action, string? channel)
     {
-        if (!ControlAllowed(config.Get()))
+        if (!ControlAllowed(config.Get(), action))
             return "controlling Discord is turned off in the widget's settings and in Settings › General › Discord";
         await _act.WaitAsync();
         try
         {
             // Checked again here: the widget's option or page may have been switched off while this press was queued.
-            if (!ControlAllowed(config.Get())) return "controlling Discord is turned off in the widget's settings and in Settings › General › Discord";
+            if (!ControlAllowed(config.Get(), action)) return "controlling Discord is turned off in the widget's settings and in Settings › General › Discord";
             var s = _snap;
             if (!s.Connected) return "Discord is not connected";
             switch (action)
@@ -759,8 +761,21 @@ public sealed partial class DiscordMonitor(ConfigStore config, ILogger<DiscordMo
     /// Control needs a Discord widget with the control option on, on a page that is enabled, or the global
     /// <see cref="DiscordConfig.AllowControl"/> switch (off by default) for shortcuts and custom widgets.
     /// </summary>
-    public static bool ControlAllowed(AgentConfig cfg) =>
-        cfg.Discord.AllowControl || WidgetControl(cfg);
+    /// <param name="action">The action asked for; null asks whether any is allowed (the panel's buttons). The
+    /// current-channel bar's own Control option allows only the actions it shows: mute, deafen and leave.</param>
+    public static bool ControlAllowed(AgentConfig cfg, string? action = null) =>
+        cfg.Discord.AllowControl || WidgetControl(cfg) || (action is null || BarActions.Contains(action)) && BarControl(cfg);
+
+    /// <summary>The voice actions the current-channel bar's Control option allows.</summary>
+    internal static readonly string[] BarActions = ["mute", "deafen", "leave"];
+
+    /// <summary>
+    /// The current-channel bar with its Control option on, on an enabled page. It allows <see cref="BarActions"/> and
+    /// stopping a screen share, nothing else: starting a share, the app list, the chat and "Open in Discord" stay with
+    /// the Discord widget's own Control (<see cref="WidgetControl"/>).
+    /// </summary>
+    public static bool BarControl(AgentConfig cfg) =>
+        cfg.Widgets(enabledPagesOnly: true).Any(w => w.Type == "discord-bar" && w.Bool("control") == true);
 
     /// <summary>A Discord widget with the control option on, on a page that is enabled: the global switch does not count.</summary>
     public static bool WidgetControl(AgentConfig cfg) =>
@@ -784,6 +799,32 @@ public sealed partial class DiscordMonitor(ConfigStore config, ILogger<DiscordMo
             };
         }
     }
+
+    /// <summary>Stops with the agent: what the monitor starts on the side (the updater that shows Discord) ends with it.</summary>
+    private CancellationToken _life;
+    /// <summary>The process name of the Discord this agent talks to (Discord, DiscordPTB or DiscordCanary), when Windows says.</summary>
+    private volatile string? _ipcProcess;
+
+    /// <summary>Which process holds the other end of the pipe: the Discord build the requests go to. Windows only.</summary>
+    private static string? IpcProcess(Stream io)
+    {
+#if WINDOWS
+        try
+        {
+            if (io is NamedPipeClientStream pipe && GetNamedPipeServerProcessId(pipe.SafePipeHandle, out var pid))
+            {
+                using var p = System.Diagnostics.Process.GetProcessById((int)pid);
+                return p.ProcessName;
+            }
+        }
+        catch { } // exited meanwhile, or not allowed: the builds are then tried in order
+#endif
+        return null;
+    }
+#if WINDOWS
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GetNamedPipeServerProcessId(Microsoft.Win32.SafeHandles.SafePipeHandle pipe, out uint processId);
+#endif
 
     // ---- IPC transport: 4-byte opcode + 4-byte length (little endian) + UTF-8 JSON ----
 

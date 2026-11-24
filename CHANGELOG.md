@@ -5,7 +5,12 @@
 **Widgets**
 - Discord on Windows: **Choose on PC** (screen share) brings Discord's window to the front. Discord draws its picker
   inside its own window, so with Discord minimized, behind other windows or in the tray the button seemed to do
-  nothing. With more than one Discord build running (stable, PTB, Canary), the stable one comes forward (#539,
+  nothing. With more than one Discord build running (stable, PTB, Canary), the one PhoneBox is connected to comes
+  forward, since that is where the picker opens (#539, #543, [DarkusK](https://github.com/DarkusK)).
+- Discord: a **Side by side** layout, as an option next to the list (the default), for tablets and large widgets. The
+  left side shows the voice channel you are in with who is there, mute, deafen and leave; the right side has tabs for
+  the chosen server's voice channels as big keys, the chat and the screen share. A server switcher keeps the servers
+  you used lately, and outside a voice channel **Back to** returns to the last one (#516,
   [DarkusK](https://github.com/DarkusK)).
 - Control Deck: **Mics off, camera off**, next to Emergency mute. One tap mutes every microphone the computer can control, leaves the speakers
   as they are and stops the OBS virtual camera. Like Emergency mute, it drops a held push-to-talk key and keeps
@@ -24,8 +29,23 @@
 - Spotify queue: a track tapped in the widget plays inside the playlist or album that is playing, so the rest of it
   follows as in the Spotify app. A track you queued by hand still plays on its own (#441,
   [HugoDeLannoy5311](https://github.com/HugoDeLannoy5311)).
+- Synced lyrics: a music video from the VEVO channel of an artist with a name of more than one word ("Tan Bionica -
+  Song" from `TanBionicaVEVO`) finds its lyrics. The channel name drops the spaces, so the title was not split into
+  artist and song (#551).
+- Shortcuts: an **Icon size** per shortcut (Settings › Shortcuts): Default, Medium, Large or Maximum, where the icon
+  fills the key. It applies to an emoji and an uploaded picture, on any key (Shortcut grid, Big button, cycle keys); a
+  program's own icon keeps its size (#542, [leosantana](https://github.com/leosantana)).
+- Synced lyrics: **Timing offset per player**, one `Name=ms` per line with the player's name as Now playing shows it
+  (for example `Apple Music=1000`), for a player whose position runs behind the sound while others don't. On Windows,
+  Apple Music now shows as "Apple Music" instead of "AppleInc" (#557,
+  [avery02072003-cmyk](https://github.com/avery02072003-cmyk)).
 
 **Agent**
+- Linux on GNOME Wayland (Ubuntu's default session): shortcuts that type text or press keys work with `ydotool`
+  installed; GNOME takes neither `wtype` nor `xdotool`. A key press or typing that fails now says so instead of
+  reporting success, and `xdotool` is used on Wayland only when neither of the others is installed, since there it
+  exits without an error having typed nothing. Setup is in [docs/SETUP.md](docs/SETUP.md) (#544,
+  [denis-nd](https://github.com/denis-nd)).
 - Settings › General › **Sleep the phone with the Lock shortcut**, off by default: running the built-in Lock shortcut
   also turns the connected phone's screen off over USB (#520, #521, [sanjai4334](https://github.com/sanjai4334)).
 - macOS and Linux: Now Playing is read every second only while a **Now playing** or **Synced lyrics** widget is on the
@@ -73,6 +93,15 @@
   [freefakesmile](https://github.com/freefakesmile)).
 
 **Panel**
+- Settings › Display › **More rows on a tablet**, off by default: a landscape tablet keeps the 12 columns and adds
+  rows (about 8 to 10, from its screen), so a page holds more widgets. Widgets below the top 6 rows stay off a phone.
+  In **Pages**, the layout editor shows Phone, Tablet and Wide tablet (#546, [dpackham](https://github.com/dpackham)).
+- Traditional Chinese: 160 panel and widget labels that were machine-translated now read right, for example
+  功耗 (power), 時脈 (clock speed), 溫度 (temperature) and 錄影 / 直播 (OBS recording / stream). Units such as MHz,
+  rpm and W stay as they are (#549, [avery02072003-cmyk](https://github.com/avery02072003-cmyk)).
+- Traditional Chinese: the settings page and the widgets' own texts are rebuilt from the human-written Simplified
+  Chinese, in Taiwan's terms, replacing a machine translation that was often wrong or unreadable (#550,
+  [avery02072003-cmyk](https://github.com/avery02072003-cmyk)).
 - Settings › Display › **Sound when a session finishes**, off by default: the panel plays its chime once when AI
   sessions finish, at a volume of its own, and never on the night screen (#488,
   [Prajjwal2404](https://github.com/Prajjwal2404)).

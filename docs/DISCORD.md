@@ -41,6 +41,19 @@ Add a **Discord** widget to a page in the editor. Options:
 | Channels | Show your servers as tiles; tap one to see and join its voice channels |
 | Notifications | Show recent Discord notifications. PhoneBox only asks Discord for them, and only sends them to the phone, while a widget with this option on is on an enabled page |
 | Control | Allow mute, deafen, switching between voice activity and push to talk, leave and join from the phone. **Off by default** |
+| Layout | **Servers and their channels in a list** (the default) or **Side by side**, made for a tablet or a large widget |
+
+### Side by side
+
+The **Side by side** layout (`layout: focus`) puts on the left a server switcher with the servers you used lately, the
+voice channel you are in with who is there (the speaking ring as in the list), and round call buttons: mic, sound,
+leave, plus **Screen** and **Chat** when screen share and the chat are on. On the right, tabs: the chosen server's voice
+channels as big keys (the one you are in first), the chat and the screen share. Recent notifications show under the
+channels, and the push-to-talk warning under the members, as in the list. Outside a voice channel the left side offers
+**Back to** the channel you were in last. The phone keeps only ids for this, in the panel's local storage: the last
+channel's (`dc-last`) and the servers used lately (`dc-recent`, for the switcher); names always come from Discord. A narrow widget drops the button labels,
+and a phone-sized one stacks the two sides. Favourites, who is in each channel and the input mode button stay in the
+list layout.
 
 With both the widget's **Control** option and `discord.allowControl` (below) off, the widget only displays state. Joining
 works only for voice channels the agent already listed.
@@ -50,13 +63,31 @@ key, release delay and sensitivity as they are. When push to talk is on but no k
 you; the widget then shows a warning, and one more tap switches back to voice activity. It uses the voice permission
 PhoneBox already asks for, so no new approval in Discord is needed.
 
+### The current-channel bar
+
+The **Discord current channel** widget (`discord-bar`) is the voice channel you are in as a bar for any page: the
+channel, who is there and mic / sound / leave. Wide it shows names and labelled buttons; narrower, round buttons and
+stacked avatars; with less room it drops sound, then chat, then screen. With screen share and the chat on, **Screen**
+and **Chat** open those views of a Discord widget on the first page that has one; while you share, **Screen** turns
+into **Stop sharing**.
+
+**Outside a voice channel it hides itself**, and the widgets right below it (or right above it) take its rows until
+you join again; turn **Hide outside a voice channel** off to keep it showing. After you leave, or while Discord
+reconnects, it waits three seconds before hiding, so the page doesn't jump for a blip. It doesn't hide in the settings'
+live preview, nor as a Smart Stack card (a stack has no rows to give away).
+
+Its own **Control** option (off by default) allows **mute, deafen and leave**, and stopping a screen share, nothing
+else: joining, the input mode, starting a share, the app list, the chat and **Open in Discord** stay with the Discord
+widget's own **Control**.
+
 ### Controlling Discord without the widget
 
 Shortcuts, scripts and custom widgets can use the same actions as the widget's buttons:
 `POST /api/discord/mute`, `/deafen`, `/inputmode`, `/leave` and `/join?channel=<id>` (an id from `GET /api/discord`). By
-default they work only while a Discord widget with **Control** on is on an enabled page. To use them without one, turn on
-**Let shortcuts and custom widgets control Discord** in **Settings › General › Discord** (`discord.allowControl`, off
-by default).
+default they work only while a Discord widget with **Control** on is on an enabled page. A current-channel bar with its
+own **Control** on allows `mute`, `deafen` and `leave` only (not `inputmode` or `join`). To use them all without a
+widget, turn on **Let shortcuts and custom widgets control Discord** in **Settings › General › Discord**
+(`discord.allowControl`, off by default).
 
 Who can reach these actions:
 
@@ -67,7 +98,8 @@ Who can reach these actions:
 | The paired phone over Wi-Fi | `/api/discord` is on the Wi-Fi allow-list (`Lan.cs`), over TLS pinned to the paired certificate, with the paired key |
 
 The switch doesn't add a path or a new way in: it only stops requiring the widget, and any of the callers above can then
-act, not only the widget. With it off, nothing changes from before.
+act, not only the widget. With it off, the actions need a Discord widget with **Control** on, or a current-channel bar
+with its own **Control** on for `mute`, `deafen` and `leave`.
 
 ### Favourites and who is in a voice channel
 
@@ -86,9 +118,10 @@ widget's two favourite lists (`favGuilds`, `favChannels`).
 
 ## Screen share
 
-**Settings › General › Discord › Start and stop Discord screen shares from the phone** (off by default; it also
-needs the **Control** option of a Discord widget on an enabled page, `discord.allowControl` is not enough) adds a 🖥️ button
-to the widget. While you are in a voice channel:
+**Settings › General › Discord › Start and stop Discord screen shares from the phone** (off by default) adds a 🖥️
+button to the widget. Starting a share and the list of apps need the **Control** option of a Discord widget on an
+enabled page (`discord.allowControl` is not enough). Stopping a share is also allowed by a current-channel bar with its
+own **Control** on, which learns only *whether* you share, never the apps or the name. While you are in a voice channel:
 
 - **Choose on PC** asks Discord to share: it shows its own picker on the computer (screens and windows), or goes live
   with the game it detects. Discord draws the picker inside its own window, so on Windows the agent then brings the
@@ -99,7 +132,8 @@ to the widget. While you are in a voice channel:
   what it can (the games it detects); PhoneBox doesn't look games up anywhere, it watches whether the share starts and
   otherwise tells you to use **Choose on PC**. Windows only; on Linux and macOS the list is empty.
 - **Stop sharing** ends the share. Discord uses one command to start and stop, so PhoneBox sends it only after Discord
-  has reported whether you are sharing (it does so right after PhoneBox connects).
+  has reported whether you are sharing (it does so right after PhoneBox connects), and waits a moment before sending
+  it: a share just ended on the computer is reported a little later, and the command would then start one.
 - Turning it on asks Discord for `rpc.screenshare.read` and `rpc.screenshare.write`, so **Discord asks you to approve
   PhoneBox again** (the widget waits for your answer; an approval that isn't answered times out after two minutes). If you decline,
   PhoneBox goes on with the permissions it had, or asks for the base ones when it had none, and only screen share stays

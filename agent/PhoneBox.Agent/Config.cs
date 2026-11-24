@@ -101,7 +101,7 @@ public sealed class AgentConfig
         shortcuts = Shortcuts.Select(s =>
         {
             var pic = shortcutIcon?.Invoke(s);
-            return new { s.Id, s.Label, s.Icon, s.Color, toggle = s.Toggle || s.Cmd is "builtin:mute" or PhoneDevices.MicCmd, hold = s.LongPress is not null, cycle = s.Cmd == "builtin:cycle" && s.Cycle is { Count: > 0 }, iconRev = pic?.Rev, iconUpload = pic?.Upload == true };
+            return new { s.Id, s.Label, s.Icon, s.Color, iconSize = s.IconSize, toggle = s.Toggle || s.Cmd is "builtin:mute" or PhoneDevices.MicCmd, hold = s.LongPress is not null, cycle = s.Cmd == "builtin:cycle" && s.Cycle is { Count: > 0 }, iconRev = pic?.Rev, iconUpload = pic?.Upload == true };
         }),
         // names only (for the Rules widget); what a rule matches on stays here
         rules = Rules.Select(r => new { r.Id, r.Name, r.Enabled, r.When }),
@@ -224,6 +224,11 @@ public sealed class DisplayConfig
     public bool VolumeKeys { get; set; } = true;
     /// <summary>landscape, portrait or auto (follow the phone). In portrait the widgets are arranged automatically.</summary>
     public string Orientation { get; set; } = "landscape";
+    /// <summary>
+    /// A landscape tablet gets more rows (12 × 8 to 12 × 10, from its shape) and an upright one packs 12 columns, so a
+    /// page holds more widgets. Off by default: turning it on changes how an arranged tablet looks.
+    /// </summary>
+    public bool TabletRows { get; set; }
     /// <summary>default, amoled, midnight, warm or graphite.</summary>
     public string Theme { get; set; } = "default";
     /// <summary>Accent colour (background glow, page dots), e.g. "#2dd4bf".</summary>
@@ -368,7 +373,7 @@ public sealed class PageConfig
     public bool Enabled { get; set; } = true;
     /// <summary>Return home after this many idle seconds on this page; null = the display setting, 0 = stay.</summary>
     public int? IdleSec { get; set; }
-    /// <summary>Widgets on a 12 x 6 grid.</summary>
+    /// <summary>Widgets on a 12-column grid: 6 rows on a phone, more on a tablet (up to <see cref="Catalog.MaxRows"/>).</summary>
     public List<WidgetConfig>? Widgets { get; set; }
 
     /// <summary>Create the page from this template (templates.json) when it has no widgets yet.</summary>
@@ -559,6 +564,10 @@ public sealed class Shortcut
     [JsonConverter(typeof(IconJsonConverter))]
     public string Icon { get; set; } = "";
     public string Color { get; set; } = "#6b7280";
+    /// <summary>How big the icon (emoji or picture) is on the phone's key: empty = default, "m", "l" or "max" (fills the key).</summary>
+    [JsonConverter(typeof(IconSizeJsonConverter))]
+    public string? IconSize { get; set; }
+    public static readonly string[] IconSizes = ["m", "l", "max"];
     /// <summary>A program, address or file; or builtin:lock / monitor-off / mute / keys / text / macro, or the phone
     /// mic command (builtin:phone-mic, see PhoneDevices).</summary>
     public string Cmd { get; set; } = "";
@@ -844,6 +853,12 @@ public sealed partial class ConfigStore(string path)
             if (string.IsNullOrWhiteSpace(s.OffCmd)) s.OffCmd = null;
             if (string.IsNullOrWhiteSpace(s.OffArgs)) s.OffArgs = null;
         }
+        // icon size: only the known presets; anything else falls back to the default
+        foreach (var s in c.Shortcuts)
+        {
+            var sz = s.IconSize?.Trim().ToLowerInvariant();
+            s.IconSize = sz is not null && Shortcut.IconSizes.Contains(sz) ? sz : null;
+        }
         // a long press runs another key: drop a blank, self-referencing or dangling target, so the phone never offers a hold that does nothing
         foreach (var s in c.Shortcuts)
         {
@@ -1019,9 +1034,9 @@ public sealed partial class ConfigStore(string path)
                 w.Appearance?.Normalize(widget: true);
                 var (minW, minH) = Catalog.MinSize(w.Type);
                 w.W = Math.Clamp(w.W, Math.Min(minW, Catalog.Cols), Catalog.Cols);
-                w.H = Math.Clamp(w.H, Math.Min(minH, Catalog.Rows), Catalog.Rows);
+                w.H = Math.Clamp(w.H, Math.Min(minH, Catalog.MaxRows), Catalog.MaxRows);
                 w.X = Math.Clamp(w.X, 0, Catalog.Cols - w.W);
-                w.Y = Math.Clamp(w.Y, 0, Catalog.Rows - w.H);
+                w.Y = Math.Clamp(w.Y, 0, Catalog.MaxRows - w.H);
                 w.Id = reservedWidgets.TryGetValue(w, out var reservedWidget)
                     ? reservedWidget : UniqueLayoutId(LayoutId(w.Type, w.Type), widgetIds);
                 widgets.Add(w);

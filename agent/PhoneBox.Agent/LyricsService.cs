@@ -255,8 +255,11 @@ public sealed partial class LyricsService : IDisposable
         {
             var left = t[..dash].Trim();
             var right = t[(dash + 3)..].Trim();
-            // "Artist - Song": the part that names the channel's artist (or any part, without an artist) is the artist
-            if (right.Length > 0 && (a.Length == 0 || left.Contains(a, StringComparison.OrdinalIgnoreCase) || a.Contains(left, StringComparison.OrdinalIgnoreCase)))
+            // "Artist - Song": the part that names the channel's artist (or any part, without an artist) is the artist.
+            // A VEVO channel drops the spaces ("TanBionicaVEVO" for "Tan Bionica"): equal without them counts too, but
+            // only equal, so "The Band" is not taken for "TheBandit".
+            if (right.Length > 0 && (a.Length == 0 || left.Contains(a, StringComparison.OrdinalIgnoreCase) || a.Contains(left, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(Spaces().Replace(left, ""), Spaces().Replace(a, ""), StringComparison.OrdinalIgnoreCase)))
             {
                 a = left;
                 t = right;
