@@ -1647,11 +1647,18 @@ function startDrag(e, w, i, mode) {
   const onMove = (ev) => {
     const dx = Math.round((ev.clientX - sx) / cw), dy = Math.round((ev.clientY - sy) / ch);
     let { x, y, w: ww, h: hh } = s;
-    if (mode === 'move') { x = Math.max(0, Math.min(cols - ww, s.x + dx)); y = Math.max(0, Math.min(rows - hh, s.y + dy)); }
-    else { ww = Math.max(Math.min(d.minW, cols), Math.min(cols - s.x, s.w + dx)); hh = Math.max(Math.min(d.minH, rows), Math.min(rows - s.y, s.h + dy)); }
+    // Only clamp the axis the pointer moved. A widget that runs onto tablet rows is drawn clipped in Phone view;
+    // clamping an unmoved axis to the visible rows would quietly move or shorten its saved tablet layout.
+    if (mode === 'move') {
+      if (dx) x = Math.max(0, Math.min(cols - ww, s.x + dx));
+      if (dy) y = Math.max(0, Math.min(rows - hh, s.y + dy));
+    } else {
+      if (dx) ww = Math.max(Math.min(d.minW, cols), Math.min(cols - s.x, s.w + dx));
+      if (dy) hh = Math.max(Math.min(d.minH, rows), Math.min(rows - s.y, s.h + dy));
+    }
     if ((x !== w.x || y !== w.y || ww !== w.w || hh !== w.h) && !overlaps(p, w, x, y, ww, hh)) {
       Object.assign(w, { x, y, w: ww, h: hh });
-      el.style.gridArea = `${y + 1} / ${x + 1} / span ${hh} / span ${ww}`;
+      el.style.gridArea = `${y + 1} / ${x + 1} / span ${Math.max(1, Math.min(hh, rows - y))} / span ${Math.max(1, Math.min(ww, cols - x))}`;
       moved = true;
     }
   };

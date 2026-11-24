@@ -1,7 +1,7 @@
 // PhoneBox desk panel: core, pages, navigation and data from the agent. The widgets live in widgets/*.js;
 // they import what they need from here, so this module must not run code that needs them while it loads
 // (the start section at the end runs after every module has loaded).
-import { designGrid, gridForViewport, placeWidget } from './grid.js';
+import { designGrid, gridForViewport, placeWidget, widgetsOnGrid } from './grid.js';
 import { W } from './registry.js';
 import './appearance.js';
 import { cached } from './widgets/helpers.js';
@@ -1504,7 +1504,9 @@ export function buildLayout() {
   pages.forEach((p, pi) => {
     const grid = h('div', 'grid');
     const pageAppearance = PhoneBoxAppearance.resolve(cfg.display?.appearance, p.appearance);
-    const pl = portrait ? portraitLayout(p.widgets, viewport.cols) : null;
+    // Upright, pack only the widgets this screen's landscape grid shows, so a phone leaves out tablet-only rows
+    // while a tablet held upright keeps them.
+    const pl = portrait ? portraitLayout(widgetsOnGrid(p.widgets, designed.cols, designed.rows), viewport.cols) : null;
     if (pl) { grid.style.gridTemplateColumns = `repeat(${viewport.cols}, minmax(0, 1fr))`; grid.style.gridTemplateRows = `repeat(${pl.rows}, minmax(0, 1fr))`; }
     for (const w of p.widgets) {
       const def = W[w.type];
@@ -2006,6 +2008,9 @@ export function openOverview() {
       b.style.gridArea = `${at.y + 1} / ${at.x + 1} / span ${at.h} / span ${at.w}`;
       return [b];
     }));
+    // Tracks follow the same grid as the icons, even when the page layout was not rebuilt after a resize.
+    map.style.gridTemplateColumns = `repeat(${g.cols}, 1fr)`;
+    map.style.gridTemplateRows = `repeat(${g.rows}, 1fr)`;
     const t = h('button', 'ov-tile' + (i === curPage ? ' on' : ''), map, h('div', 'ov-name', h('b', null, `${i + 1}`), rich(` ${p.icon || ''} ${p.title}`)));
     t.addEventListener('click', (e) => { e.stopPropagation(); haptic(); closeOverview(); goPage(i, true); });
     return t;

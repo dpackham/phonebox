@@ -49,3 +49,8 @@ export function placeWidget(w, cols, rows) {
   if (x >= cols || y >= rows) return null;
   return { x, y, w: Math.min(ww, cols - x), h: Math.min(hh, rows - y) };
 }
+
+/** The widgets that sit on a cols×rows page; the rest are on rows this screen does not have. */
+export function widgetsOnGrid(widgets, cols, rows) {
+  return (widgets || []).filter((w) => placeWidget(w, cols, rows));
+}
