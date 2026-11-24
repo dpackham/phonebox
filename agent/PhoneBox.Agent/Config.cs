@@ -126,6 +126,19 @@ public sealed class AgentConfig
     public bool ShowCodexQuota() => Widgets(enabledPagesOnly: true)
         .Any(w => w.Type is "codexbar" or "quotas" && WidgetIncludesProvider(w, "codex"));
 
+    /// <summary>
+    /// True when an enabled page (including enabled Smart Stack children) shows Grok quotas: a Quotas or CodexBar
+    /// widget, or a Clock with its status line, whose providers include Grok, or a Quota ring set to Grok.
+    /// </summary>
+    public bool ShowGrokQuota() => Widgets(enabledPagesOnly: true)
+        .Any(w => w.Type switch
+        {
+            "codexbar" or "quotas" => WidgetIncludesProvider(w, "grok"),
+            "clock" => w.Bool("status") != false && WidgetIncludesProvider(w, "grok"),
+            "quotaring" => w.Str("provider") == "grok",
+            _ => false,
+        });
+
     private bool WidgetIncludesProvider(WidgetConfig w, string id)
     {
         if (w.Opt("providers") is { ValueKind: JsonValueKind.Array } arr)

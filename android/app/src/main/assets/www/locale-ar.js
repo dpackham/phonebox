@@ -511,7 +511,7 @@ window.PhoneBoxLocaleData = Object.assign(window.PhoneBoxLocaleData || {}, {
       "s.quotas.lead": "اختر خدمات البرمجة بالذكاء الاصطناعي التي تريد متابعتها على اللوحة، واضبط التبديل بينها.",
       "s.quotas.tracked": "خدمات الذكاء الاصطناعي المتتبعة",
       "s.quotas.rotate": "تناوب مقدمي الخدمات بصورة آلية",
-      "s.quotas.grokHint": "يستخدم Grok تسجيل دخول Grok CLI على هذا الكمبيوتر (grok login). يقرأ PhoneBox هذا الرمز ولا يجدده. ألغِ تحديد Grok لإيقاف الفحص.",
+      "s.quotas.grokHint": "يستخدم Grok تسجيل دخول Grok CLI على هذا الكمبيوتر (grok login). يقرأ PhoneBox هذا الرمز دون تجديده، ولا يسأل Grok إلا عندما تعرض صفحة مفعّلة حصص Grok.",
       "s.quotas.pageSize": "عدد البطاقات في كل مرة",
       "s.quotas.pageSizeHint": "0 = أظهر كل شيء",
       "s.quotas.rotateInterval": "الدوران كل (ثانية)",

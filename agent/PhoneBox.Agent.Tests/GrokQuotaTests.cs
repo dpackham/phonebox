@@ -221,19 +221,147 @@ public sealed class GrokQuotaTests : IDisposable
         return res;
     }
 
-    [Fact]
-    public async Task UntickingGrokInAiQuotasStopsTheCheck()
+    private const string Credits = """{"config":{"creditUsagePercent":10}}""";
+
+    private (QuotaMonitor Agent, Script Http) Configured(string config)
     {
         WriteReady();
         var path = Path.Combine(_root, "config.json");
-        File.WriteAllText(path, """{"codexBar":{"providers":["claude","codex"]}}""");
-        var http = new Script { Reply = _ => Json("""{"config":{"creditUsagePercent":10}}""") };
-        var agent = new QuotaMonitor(new ConfigStore(path), new ListLog()) { GrokAuthPath = Path.Combine(_root, "auth.json"), HttpHandler = http };
+        File.WriteAllText(path, config);
+        var http = new Script { Reply = _ => Json(Credits) };
+        return (new QuotaMonitor(new ConfigStore(path), new ListLog()) { GrokAuthPath = Path.Combine(_root, "auth.json"), HttpHandler = http }, http);
+    }
 
+    // A second, enabled page without quotas: the agent re-enables the first page when every page is off.
+    private static string Page(string widget, bool enabled = true) =>
+        "{\"pages\":[{\"id\":\"p\",\"title\":\"P\",\"enabled\":" + (enabled ? "true" : "false") + ",\"widgets\":[" + widget + "]},"
+        + "{\"id\":\"other\",\"title\":\"Other\",\"enabled\":true,\"widgets\":[{\"id\":\"n\",\"type\":\"note\",\"x\":0,\"y\":0,\"w\":4,\"h\":2,\"options\":{}}]}]}";
+
+    [Theory]
+    [InlineData("""{"id":"q","type":"quotas","x":0,"y":0,"w":12,"h":6,"options":{"providers":["claude","grok"]}}""", true)]
+    [InlineData("""{"id":"q","type":"codexbar","x":0,"y":0,"w":12,"h":6,"options":{"providers":["grok"]}}""", true)]
+    [InlineData("""{"id":"q","type":"quotas","x":0,"y":0,"w":12,"h":6,"options":{"providers":["claude","codex"]}}""", false)]
+    [InlineData("""{"id":"r","type":"quotaring","x":0,"y":0,"w":3,"h":3,"options":{"provider":"grok"}}""", true)]
+    [InlineData("""{"id":"r","type":"quotaring","x":0,"y":0,"w":3,"h":3,"options":{"provider":"claude"}}""", false)]
+    [InlineData("""{"id":"c","type":"clock","x":0,"y":0,"w":6,"h":4,"options":{"status":true,"providers":["grok"]}}""", true)]
+    [InlineData("""{"id":"c","type":"clock","x":0,"y":0,"w":6,"h":4,"options":{"status":false,"providers":["grok"]}}""", false)]
+    [InlineData("""{"id":"n","type":"note","x":0,"y":0,"w":6,"h":4,"options":{}}""", false)]
+    public async Task GrokIsAskedOnlyWhileAnEnabledPageShowsIt(string widget, bool asked)
+    {
+        var (agent, http) = Configured(Page(widget));
         await agent.GrokTickAsync(Now, default);
+        Assert.Equal(asked, http.Urls.Count > 0);
+        if (!asked) Assert.DoesNotContain(agent.Snapshot(Now), p => p.Id == "grok");
+    }
 
+    [Fact]
+    public async Task AWidgetOnADisabledPageDoesNotAskGrok()
+    {
+        var (agent, http) = Configured(Page("""{"id":"q","type":"quotas","x":0,"y":0,"w":12,"h":6,"options":{"providers":["grok"]}}""", enabled: false));
+        await agent.GrokTickAsync(Now, default);
         Assert.Empty(http.Urls);
-        Assert.DoesNotContain(agent.Snapshot(Now), p => p.Id == "grok");
+    }
+
+    [Fact]
+    public async Task AQuotasWidgetWithoutItsOwnListFollowsTheGlobalOne()
+    {
+        var widget = """{"id":"q","type":"quotas","x":0,"y":0,"w":12,"h":6,"options":{}}""";
+        var (on, onHttp) = Configured(Page(widget)[..^1] + ""","codexBar":{"providers":["claude","grok"]}}""");
+        await on.GrokTickAsync(Now, default);
+        Assert.NotEmpty(onHttp.Urls);
+
+        var (off, offHttp) = Configured(Page(widget)[..^1] + ""","codexBar":{"providers":["claude","codex","antigravity"]}}""");
+        await off.GrokTickAsync(Now, default);
+        Assert.Empty(offHttp.Urls);
+    }
+
+    [Fact]
+    public async Task ThePlanNameIsAskedOnceInAFewHours()
+    {
+        WriteReady();
+        var (agent, http, _) = Agent();
+        http.Reply = req => req.RequestUri!.AbsolutePath.EndsWith("/settings", StringComparison.Ordinal)
+            ? Json("""{"subscription_tier_display":"SuperGrok"}""") : Json(Credits);
+        await agent.GrokTickAsync(Now, default);
+        await agent.GrokTickAsync(Now + QuotaMonitor.GrokHealthyMs, default);
+        Assert.Single(http.Urls, u => u.Contains("/settings", StringComparison.Ordinal));
+        Assert.Equal("SuperGrok", Assert.Single(agent.Snapshot(Now), p => p.Id == "grok").Plan);
+
+        await agent.GrokTickAsync(Now + QuotaMonitor.GrokPlanCacheMs + 1, default);
+        Assert.Equal(2, http.Urls.Count(u => u.Contains("/settings", StringComparison.Ordinal)));
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.TooManyRequests)]
+    [InlineData(HttpStatusCode.ServiceUnavailable)]
+    public async Task ALimitedReplyWaitsForRetryAfter(HttpStatusCode status)
+    {
+        WriteReady();
+        var (agent, http, _) = Agent();
+        http.Reply = _ =>
+        {
+            var res = new HttpResponseMessage(status);
+            res.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(120));
+            return res;
+        };
+        await agent.GrokTickAsync(Now, default);
+        Assert.Single(http.Urls);
+        await agent.GrokTickAsync(Now + 119_000, default);
+        Assert.Single(http.Urls);
+        await agent.GrokTickAsync(Now + 121_000, default);
+        Assert.Equal(2, http.Urls.Count);
+        Assert.Contains("limiting", Assert.Single(agent.Snapshot(Now), p => p.Id == "grok").Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task ALimitedReplyWithoutRetryAfterWaitsFiveMinutes()
+    {
+        WriteReady();
+        var (agent, http, _) = Agent();
+        http.Reply = _ => new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+        await agent.GrokTickAsync(Now, default);
+        await agent.GrokTickAsync(Now + 299_000, default);
+        Assert.Single(http.Urls);
+        await agent.GrokTickAsync(Now + 305_000, default); // the wait counts from the answer, a few ms after Now
+        Assert.Equal(2, http.Urls.Count);
+    }
+
+    [Fact]
+    public async Task OfflineChecksRetryQuicklyThenBackOff()
+    {
+        WriteReady();
+        var (agent, http, _) = Agent();
+        http.Reply = _ => throw new HttpRequestException(HttpRequestError.ConnectionError, "no route");
+        var t = Now;
+        for (var i = 0; i <= QuotaMonitor.GrokOfflineRetries; i++)
+        {
+            await agent.GrokTickAsync(t, default);
+            Assert.Equal(i + 1, http.Urls.Count);
+            t += 30_000;
+        }
+        // The retries are used up: the next check backs off for a minute instead of 30 seconds.
+        await agent.GrokTickAsync(t, default);
+        Assert.Equal(QuotaMonitor.GrokOfflineRetries + 1, http.Urls.Count);
+        await agent.GrokTickAsync(t + 30_000, default);
+        Assert.Equal(QuotaMonitor.GrokOfflineRetries + 2, http.Urls.Count);
+        Assert.Contains("Could not reach Grok", Assert.Single(agent.Snapshot(Now), p => p.Id == "grok").Error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task AClockSetBackKeepsAPendingRetryAfter()
+    {
+        WriteReady();
+        var (agent, http, _) = Agent();
+        http.Reply = _ =>
+        {
+            var res = new HttpResponseMessage(HttpStatusCode.TooManyRequests);
+            res.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromMinutes(30));
+            return res;
+        };
+        await agent.GrokTickAsync(Now, default);
+        // The clock jumps back two hours: the wait is capped, not dropped, so nothing is asked at once.
+        await agent.GrokTickAsync(Now - 7_200_000, default);
+        Assert.Single(http.Urls);
     }
 
     private sealed class Script : HttpMessageHandler

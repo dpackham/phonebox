@@ -163,6 +163,39 @@ public sealed class GrokSessionTests : IDisposable
         Assert.True(SessionMonitor.GrokSameProcess(self.Id, 123_456_789)); // Linux-style clock ticks: not Unix time
     }
 
+    [Fact]
+    public void AMalformedActiveSessionsFileDoesNotHideSessions()
+    {
+        var dir = SessionDir();
+        Write(dir, "summary.json", Summary());
+        Write(dir, "events.jsonl", Event("turn_started") + Event("phase_changed", "phase", "permission_prompt"));
+        File.WriteAllText(Path.Combine(_root, "active_sessions.json"),
+            "[\"oops\", null, {\"session_id\":\"" + Id + "\",\"pid\":\"123\"}, {\"session_id\":\"" + Id + "\",\"pid\":null}]");
+        var session = Assert.Single(_monitor.ReadGrok(_root, (_, _) => true));
+        Assert.Equal("grok:" + Id, session.Id);
+        Assert.Null(session.Pid);
+    }
+
+    [Fact]
+    public void AnUnchangedSessionIsNotParsedAgain()
+    {
+        var dir = SessionDir();
+        Write(dir, "summary.json", Summary());
+        Write(dir, "usage.json", Usage());
+        Write(dir, "events.jsonl", Event("turn_started"));
+        Assert.Equal(1000, Assert.Single(_monitor.ReadGrok(_root, (_, _) => false)).TotalTokens);
+
+        // Same size and write time: the cached reading is kept, even though the bytes differ.
+        var usage = Path.Combine(dir, "usage.json");
+        var when = File.GetLastWriteTimeUtc(usage);
+        File.WriteAllText(usage, Usage().Replace("1000", "9999", StringComparison.Ordinal));
+        File.SetLastWriteTimeUtc(usage, when);
+        Assert.Equal(1000, Assert.Single(_monitor.ReadGrok(_root, (_, _) => false)).TotalTokens);
+
+        File.SetLastWriteTimeUtc(usage, when.AddSeconds(1));
+        Assert.Equal(9999, Assert.Single(_monitor.ReadGrok(_root, (_, _) => false)).TotalTokens);
+    }
+
     private string SessionDir()
     {
         var dir = Path.Combine(_root, "sessions", "%2Fwork%2Fphonebox", Id);

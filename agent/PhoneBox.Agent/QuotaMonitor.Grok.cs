@@ -14,6 +14,9 @@ public sealed partial class QuotaMonitor
     private int _grokFailures;
     private int _grokOffline;
     private string? _grokRefused;
+    private string? _grokPlan;
+    private string? _grokPlanPrint;
+    private long _grokPlanAt;
     private long _grokRefusedAt;
 
     internal const long GrokHealthyMs = 180_000;
@@ -23,6 +26,7 @@ public sealed partial class QuotaMonitor
     internal const int GrokOfflineRetries = 3;
     private const long GrokUnrecognizedMs = 900_000;
     private const long GrokMaxWaitMs = 3_605_000;
+    internal const long GrokPlanCacheMs = 6 * 3_600_000;
     private const string GrokRefusedMessage = "Grok did not accept the sign-in; it will refresh when Grok runs";
 
     private enum GrokResult { Ok, Limited, Refused, Offline, Unrecognized, Failed }
@@ -33,13 +37,17 @@ public sealed partial class QuotaMonitor
     /// </summary>
     internal async Task GrokTickAsync(long nowMs, CancellationToken ct)
     {
-        // Unticking Grok in AI quotas is the switch: the auth file is not read and nothing is sent.
+        // nowMs was read before this pass; the auth read and the request take time too.
+        var started = Environment.TickCount64;
+        // Only while an enabled page shows Grok quotas: otherwise the auth file is not read and nothing is sent.
         if (!IsGrokEnabled())
         {
             _grok = null;
             return;
         }
-        if (_grokNextAt - nowMs > GrokMaxWaitMs) _grokNextAt = nowMs;
+        // A clock set back would otherwise hold the next check for as long as it moved; a clock set forward
+        // keeps a pending Retry-After instead of asking at once.
+        if (_grokNextAt - nowMs > GrokMaxWaitMs) _grokNextAt = nowMs + GrokMaxWaitMs;
         if (nowMs < _grokNextAt) return;
 
         string? json = null;
@@ -76,7 +84,6 @@ public sealed partial class QuotaMonitor
             return;
         }
 
-        var started = Environment.TickCount64;
         var (result, retryAfter) = await FetchGrok(signIn, nowMs, ct);
         // Retry-After counts from the answer, not from when the request left.
         var answeredMs = nowMs + Math.Max(0, Environment.TickCount64 - started);
@@ -138,7 +145,7 @@ public sealed partial class QuotaMonitor
                 _grok = KeepGrok(signIn.PlanFallback, "Grok sent a quota reply this version doesn't recognize");
                 return (GrokResult.Unrecognized, null);
             }
-            var plan = await PlanFromSettings(signIn.Token, ct) ?? credits.Value.Tier ?? signIn.PlanFallback;
+            var plan = await GrokPlan(signIn.Token, nowMs, ct) ?? credits.Value.Tier ?? signIn.PlanFallback;
             List<QuotaLimit> limits = [];
             if (credits.Value.Percent is { } pct)
                 limits.Add(new QuotaLimit(credits.Value.Label, pct, credits.Value.ResetsAt, credits.Value.WindowSec, "normal"));
@@ -160,6 +167,26 @@ public sealed partial class QuotaMonitor
             _grok = KeepGrok(signIn.PlanFallback, "Could not fetch quota: " + ex.Message);
             return (GrokResult.Failed, null);
         }
+    }
+
+    /// <summary>
+    /// The plan name from Grok's settings, kept for a few hours: it rarely changes, and this halves the requests.
+    /// Asked again for another sign-in, and never once Grok is no longer shown (the setting can change mid-request).
+    /// </summary>
+    private async Task<string?> GrokPlan(string token, long nowMs, CancellationToken ct)
+    {
+        var print = Fingerprint(token);
+        if (_grokPlan is { } cached && print == _grokPlanPrint && nowMs - _grokPlanAt is >= 0 and < GrokPlanCacheMs)
+            return cached;
+        if (!IsGrokEnabled()) return print == _grokPlanPrint ? _grokPlan : null;
+        var plan = await PlanFromSettings(token, ct);
+        if (plan is not null)
+        {
+            _grokPlan = plan;
+            _grokPlanPrint = print;
+            _grokPlanAt = nowMs;
+        }
+        return plan ?? (print == _grokPlanPrint ? _grokPlan : null);
     }
 
     /// <summary>The plan name is optional. Two seconds is the whole budget, so a stuck call cannot hold the usage we already have.</summary>

@@ -158,8 +158,9 @@ app keeps its own sign-in to itself, so with only the desktop app the widget sho
 still show up in the Sessions widget.
 
 **Grok quotas** need the Grok CLI sign-in (`grok login`). PhoneBox reads the token in `~/.grok/auth.json`
-(`GROK_HOME` overrides that folder) and asks `cli-chat-proxy.grok.com` for the credit window. It does not refresh
-the token, start `grok`, or send the token to the phone. The bar is the weekly or monthly included credits. A prepaid
+(`GROK_HOME` overrides that folder) and asks `cli-chat-proxy.grok.com` for the credit window, only while an enabled
+page shows Grok quotas (a Quotas, CodexBar or Quota ring widget, or a Clock status line, that includes Grok). It does
+not refresh the token, start `grok`, or send the token to the phone. The bar is the weekly or monthly included credits. A prepaid
 balance is shown in dollars only when the reply includes one. The included credits stay a percentage.
 
 **Codex live quotas** are off by default (normally PhoneBox reads Codex's local session logs without running `codex`).

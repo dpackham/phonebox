@@ -253,10 +253,10 @@ public sealed partial class QuotaMonitor(ConfigStore config, ILogger<QuotaMonito
     /// <summary>Returns the current cost overview evaluated at <paramref name="now"/>.</summary>
     internal QuotaOverview? Overview(long now) => CodexBar.SelectOverview(_overview, IsOverviewEnabled(), now);
 
-    /// <summary>Returns true when live Codex CLI polling is opted in and an enabled page shows Codex quotas.</summary>
-    /// <summary>Grok is polled while it is ticked in AI quotas (it is by default). Unit tests without a config poll it.</summary>
-    internal bool IsGrokEnabled() => config is null || config.Get().CodexBar.Providers.Contains("grok");
+    /// <summary>Grok is polled only while an enabled page shows Grok quotas. Unit tests without a config poll it.</summary>
+    internal bool IsGrokEnabled() => config is null || config.Get().ShowGrokQuota();
 
+    /// <summary>Returns true when live Codex CLI polling is opted in and an enabled page shows Codex quotas.</summary>
     internal bool IsCodexLiveEnabled() => config is null || (config.Get() is { } c && c.CodexBar.CodexLiveQuota && c.ShowCodexQuota());
 
     internal const long CodexLiveIntervalMs = 180_000;

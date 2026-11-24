@@ -15,12 +15,22 @@ public sealed partial class SessionMonitor
     /// <summary>2001-09-09 in Unix microseconds. Clock ticks since boot stay far below it.</summary>
     private const long GrokUnixMicrosFloor = 1_000_000_000_000_000;
 
+    /// <summary>Sessions shown at most, newest first, like Antigravity.</summary>
+    private const int GrokMaxSessions = 50;
+    /// <summary>A metadata file larger than this is skipped: usage.json grows with every turn.</summary>
+    private const long GrokMaxJsonBytes = 4 * 1024 * 1024;
+    /// <summary>Parsed metadata per session folder, reused while none of its files changed (the pass runs every 2 s).</summary>
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string Stamp, GrokParsed Parsed)> _grokParsed = new();
+
     private string? _grokDiscoveryHome;
     private long _nextGrokDiscovery;
     private string[] _grokSessionDirs = [];
 
     private readonly record struct GrokLive(int Pid, long PidStart);
     private readonly record struct GrokTail(bool Open, bool Waiting, string? Outcome, string? LastTool, long? TurnStartedAt);
+    private sealed record GrokParsed(string Project, long Since, long StartedAt, string? Model, string? Effort,
+        long? TotalTokens, long? InputTokens, long? OutputTokens, long? CachedInputTokens, long? ReasoningTokens,
+        long? LastInputTokens, long? ContextWindow, GrokTail Tail);
 
     /// <summary>
     /// Recent Grok CLI sessions under <paramref name="homeDir"/> (or <c>GROK_HOME</c>, or <c>~/.grok</c>).
@@ -56,23 +66,77 @@ public sealed partial class SessionMonitor
         }
 
         var live = ReadGrokActive(Path.Combine(home, "active_sessions.json"));
+        var recent = new List<(string Dir, string Id, DateTime Newest)>();
         foreach (var dir in _grokSessionDirs)
+        {
+            try
+            {
+                var id = Path.GetFileName(dir);
+                if (GrokId(id) && GrokNewest(dir) is { } newest && newest > cutoff) recent.Add((dir, id, newest));
+            }
+            catch { /* a folder removed mid-pass */ }
+        }
+        var shown = recent.OrderByDescending(r => r.Newest).Take(GrokMaxSessions).ToList();
+        foreach (var gone in _grokParsed.Keys.Where(k => !shown.Any(s => s.Dir == k)).ToList()) _grokParsed.TryRemove(gone, out _);
+        foreach (var (dir, id, newest) in shown)
         {
             AgentSession? session = null;
             try
             {
-                var id = Path.GetFileName(dir);
-                if (!GrokId(id) || GrokNewest(dir) is not { } newest || newest <= cutoff) continue;
                 live.TryGetValue(id, out var running);
                 var runningNow = running.Pid > 0 && alive(running.Pid, running.PidStart);
-                session = ReadGrokSession(dir, id, runningNow ? running.Pid : null, newest);
+                session = GrokSession(ParsedGrok(dir), id, runningNow ? running.Pid : null, newest);
             }
             catch { /* one session being written must not drop the rest */ }
             if (session is not null) yield return session;
         }
     }
 
-    private static AgentSession? ReadGrokSession(string dir, string id, int? pid, DateTime newest)
+    /// <summary>The parsed metadata of one session folder, read again only when one of its files changed.</summary>
+    private GrokParsed ParsedGrok(string dir)
+    {
+        var stamp = string.Join('|', new[] { "summary.json", "usage.json", "signals.json", "events.jsonl" }.Select(name =>
+        {
+            var info = new FileInfo(Path.Combine(dir, name));
+            return info.Exists ? $"{info.LastWriteTimeUtc.Ticks}:{info.Length}" : "-";
+        }));
+        if (_grokParsed.TryGetValue(dir, out var cached) && cached.Stamp == stamp) return cached.Parsed;
+        var parsed = ParseGrokSession(dir);
+        _grokParsed[dir] = (stamp, parsed);
+        return parsed;
+    }
+
+    /// <summary>Status depends on the clock and the running process, so it is worked out on every pass.</summary>
+    private static AgentSession GrokSession(GrokParsed p, string id, int? pid, DateTime newest)
+    {
+        var fresh = DateTime.UtcNow - newest < GrokBusyWindow;
+        var waiting = p.Tail.Open && p.Tail.Waiting && pid is not null;
+        var status = waiting ? "waiting" : p.Tail.Open && fresh ? "busy" : "idle";
+        return new AgentSession(
+            Id: "grok:" + id,
+            Tool: "grok",
+            Name: p.Project.ToLowerInvariant() + "-" + id[..4],
+            Project: p.Project,
+            Status: status,
+            WaitingFor: waiting ? "permission" : null,
+            Since: p.Since > 0 ? p.Since : new DateTimeOffset(newest).ToUnixTimeMilliseconds(),
+            StartedAt: p.StartedAt,
+            Pid: pid,
+            Model: p.Model,
+            Effort: p.Effort,
+            TotalTokens: p.TotalTokens,
+            InputTokens: p.InputTokens,
+            OutputTokens: p.OutputTokens,
+            CachedInputTokens: p.CachedInputTokens,
+            ReasoningTokens: p.ReasoningTokens,
+            LastInputTokens: p.LastInputTokens,
+            ContextWindow: p.ContextWindow,
+            TurnStartedAt: p.Tail.Open ? p.Tail.TurnStartedAt : null,
+            Outcome: p.Tail.Open ? null : GrokOutcome(p.Tail.Outcome),
+            LastTool: GrokLabel(p.Tail.LastTool, 64));
+    }
+
+    private static GrokParsed ParseGrokSession(string dir)
     {
         using var summary = ReadSharedJson(Path.Combine(dir, "summary.json"));
         using var usage = ReadSharedJson(Path.Combine(dir, "usage.json"));
@@ -89,23 +153,11 @@ public sealed partial class SessionMonitor
             try { cwd = Uri.UnescapeDataString(Path.GetFileName(Path.GetDirectoryName(dir) ?? "")); }
             catch (UriFormatException) { cwd = null; }
         }
-        var project = GrokProject(cwd);
-        var tail = ReadGrokTail(Path.Combine(dir, "events.jsonl"));
-        var fresh = DateTime.UtcNow - newest < GrokBusyWindow;
-        var waiting = tail.Open && tail.Waiting && pid is not null;
-        var status = waiting ? "waiting" : tail.Open && fresh ? "busy" : "idle";
         var lastTurn = LastGrokTurn(usageRoot);
-        return new AgentSession(
-            Id: "grok:" + id,
-            Tool: "grok",
-            Name: project.ToLowerInvariant() + "-" + id[..4],
-            Project: project,
-            Status: status,
-            WaitingFor: waiting ? "permission" : null,
-            Since: IsoMs(Str(summaryRoot, "last_active_at")) ?? IsoMs(Str(usageRoot, "updatedAt"))
-                ?? new DateTimeOffset(newest).ToUnixTimeMilliseconds(),
+        return new GrokParsed(
+            Project: GrokProject(cwd),
+            Since: IsoMs(Str(summaryRoot, "last_active_at")) ?? IsoMs(Str(usageRoot, "updatedAt")) ?? 0,
             StartedAt: IsoMs(Str(summaryRoot, "created_at")) ?? 0,
-            Pid: pid,
             Model: GrokLabel(Str(session, "primaryModelId") ?? Str(summaryRoot, "current_model_id") ?? Str(signalsRoot, "primaryModelId"), 64),
             Effort: GrokLabel(Str(summaryRoot, "reasoning_effort"), 16),
             TotalTokens: NonNeg(Long(session, "totalTokens")),
@@ -115,9 +167,7 @@ public sealed partial class SessionMonitor
             ReasoningTokens: NonNeg(Long(session, "reasoningTokens")),
             LastInputTokens: NonNeg(Long(lastTurn, "inputTokens")),
             ContextWindow: NonNeg(Long(signalsRoot, "contextWindowTokens")),
-            TurnStartedAt: tail.Open ? tail.TurnStartedAt : null,
-            Outcome: tail.Open ? null : GrokOutcome(tail.Outcome),
-            LastTool: GrokLabel(tail.LastTool, 64));
+            Tail: ReadGrokTail(Path.Combine(dir, "events.jsonl")));
     }
 
     private static JsonElement LastGrokTurn(JsonElement usage)
@@ -211,9 +261,11 @@ public sealed partial class SessionMonitor
         if (doc is null || doc.RootElement.ValueKind != JsonValueKind.Array) return map;
         foreach (var row in doc.RootElement.EnumerateArray())
         {
+            // One odd row (a string or null pid, a value that is not an object) must not hide the other sessions.
+            if (row.ValueKind != JsonValueKind.Object) continue;
             var id = Str(row, "session_id");
             if (!GrokId(id)) continue;
-            var pid = row.TryGetProperty("pid", out var p) && p.TryGetInt32(out var n) ? n : 0;
+            var pid = row.TryGetProperty("pid", out var p) && p.ValueKind == JsonValueKind.Number && p.TryGetInt32(out var n) ? n : 0;
             map[id!] = new GrokLive(pid, Long(row, "pid_start") ?? 0);
         }
         return map;
@@ -265,6 +317,7 @@ public sealed partial class SessionMonitor
         try
         {
             using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            if (fs.Length > GrokMaxJsonBytes) return null;
             return JsonDocument.Parse(fs);
         }
         catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException) { return null; }

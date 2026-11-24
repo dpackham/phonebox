@@ -511,7 +511,7 @@ window.PhoneBoxLocaleData = Object.assign(window.PhoneBoxLocaleData || {}, {
       "s.quotas.lead": "패널에서 추적 및 표시할 AI 코딩 서비스를 선택하고 회전을 구성합니다.",
       "s.quotas.tracked": "추적 AI 서비스",
       "s.quotas.rotate": "제공자 자동으로 돌리기",
-      "s.quotas.grokHint": "Grok은 이 컴퓨터의 Grok CLI 로그인(grok login)을 사용합니다. PhoneBox는 그 토큰을 읽기만 하고 갱신하지 않습니다. 확인을 멈추려면 Grok 선택을 해제하세요.",
+      "s.quotas.grokHint": "Grok은 이 컴퓨터의 Grok CLI 로그인(grok login)을 사용합니다. PhoneBox는 그 토큰을 갱신하지 않고 읽으며, 사용 중인 페이지에 Grok 할당량이 표시될 때만 Grok에 요청합니다.",
       "s.quotas.pageSize": "한 번에 카드",
       "s.quotas.pageSizeHint": "0 = 모두 보기",
       "s.quotas.rotateInterval": "초 단위로 회전",

@@ -511,7 +511,7 @@ window.PhoneBoxLocaleData = Object.assign(window.PhoneBoxLocaleData || {}, {
       "s.quotas.lead": "选择要跟踪和显示在面板上的 AI 编码服务,并配置旋转。",
       "s.quotas.tracked": "追蹤人工智慧服務",
       "s.quotas.rotate": "自動轉換提供者",
-      "s.quotas.grokHint": "Grok 使用這台電腦上 Grok CLI 的登入資訊（grok login）。PhoneBox 只讀取該權杖，不會重新整理它。取消勾選 Grok 即可停止檢查。",
+      "s.quotas.grokHint": "Grok 使用這台電腦上 Grok CLI 的登入資訊（grok login）。PhoneBox 只讀取該權杖、不會重新整理它，並且只在已啟用的頁面顯示 Grok 配額時才查詢 Grok。",
       "s.quotas.pageSize": "一次一張牌",
       "s.quotas.pageSizeHint": "0=全部顯示",
       "s.quotas.rotateInterval": "每秒旋轉",

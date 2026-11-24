@@ -876,7 +876,7 @@ nav a.on::before { color: var(--accent); }
             <label class="check"><input type="checkbox" id="cb_antigravity"> Antigravity</label>
             <label class="check"><input type="checkbox" id="cb_grok"> Grok</label>
           </div>
-          <span class="hint" data-i18n="s.quotas.grokHint">Grok uses the Grok CLI sign-in on this computer (grok login). PhoneBox reads that token and does not refresh it. Untick Grok to stop the check.</span>
+          <span class="hint" data-i18n="s.quotas.grokHint">Grok uses the Grok CLI sign-in on this computer (grok login). PhoneBox reads that token without refreshing it, and asks Grok only while an enabled page shows Grok quotas.</span>
         </div>
         <div class="field" style="margin-top:10px">
           <label class="check"><input type="checkbox" data-bind="codexBar.rotate"> <span data-i18n="s.quotas.rotate">Rotate providers automatically</span></label>

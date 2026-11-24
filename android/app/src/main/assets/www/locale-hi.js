@@ -511,7 +511,7 @@ window.PhoneBoxLocaleData = Object.assign(window.PhoneBoxLocaleData || {}, {
       "s.quotas.lead": "चुनें कि कौन सी एआई कोडिंग सेवाओं को ट्रेक करने के लिए और फलक पर दिखाने के लिए, और परिक्रमण कॉन्फ़िगर करें.",
       "s.quotas.tracked": "ट्रैक्ड एआई सेवाएँ",
       "s.quotas.rotate": "प्रदाता स्वचालित घुमाएँ",
-      "s.quotas.grokHint": "Grok इस कंप्यूटर पर Grok CLI के साइन-इन (grok login) का उपयोग करता है। PhoneBox उस टोकन को पढ़ता है और उसे रिफ़्रेश नहीं करता। जाँच रोकने के लिए Grok से सही का निशान हटाएँ।",
+      "s.quotas.grokHint": "Grok इस कंप्यूटर पर Grok CLI के साइन-इन (grok login) का उपयोग करता है। PhoneBox उस टोकन को रिफ़्रेश किए बिना पढ़ता है, और Grok से तभी पूछता है जब कोई चालू पेज Grok कोटा दिखाता है।",
       "s.quotas.pageSize": "एक समय में कार्ड",
       "s.quotas.pageSizeHint": "0 = सभी दिखाएँ",
       "s.quotas.rotateInterval": "प्रत्येक (सेकण्ड) में घुमाएँ",

@@ -511,7 +511,7 @@ window.PhoneBoxLocaleData = Object.assign(window.PhoneBoxLocaleData || {}, {
       "s.quotas.lead": "Zvolte, které služby kódování umělé inteligence chcete sledovat a zobrazit na panelu, a nakonfigurujte rotaci.",
       "s.quotas.tracked": "Sledované AI služby",
       "s.quotas.rotate": "Automaticky rotujte poskytovatele",
-      "s.quotas.grokHint": "Grok používá přihlášení Grok CLI na tomto počítači (grok login). PhoneBox tento token čte a neobnovuje ho. Zrušením zaškrtnutí Groku kontrolu zastavíte.",
+      "s.quotas.grokHint": "Grok používá přihlášení Grok CLI na tomto počítači (grok login). PhoneBox tento token čte, aniž by ho obnovoval, a Grok se ptá jen tehdy, když zapnutá stránka zobrazuje kvóty Groku.",
       "s.quotas.pageSize": "Karty najednou",
       "s.quotas.pageSizeHint": "0 = zobrazit vše",
       "s.quotas.rotateInterval": "Otočit každý (v sekundách)",

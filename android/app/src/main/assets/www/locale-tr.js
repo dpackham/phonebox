@@ -55,7 +55,7 @@ window.PhoneBoxLocaleData = Object.assign(window.PhoneBoxLocaleData || {}, {
       "s.quotas.lead": "Panelde izlenecek ve gösterilecek hangi AI kodlama hizmetlerini seç, ve dönüşü ayarla.",
       "s.quotas.tracked": "Yapay zeka hizmetleri izlendi",
       "s.quotas.rotate": "Sağlayıcıları otomatik olarak döndür",
-      "s.quotas.grokHint": "Grok, bu bilgisayardaki Grok CLI oturumunu kullanır (grok login). PhoneBox bu belirteci okur ve yenilemez. Denetimi durdurmak için Grok'un işaretini kaldırın.",
+      "s.quotas.grokHint": "Grok, bu bilgisayardaki Grok CLI oturumunu kullanır (grok login). PhoneBox bu belirteci yenilemeden okur ve Grok'a yalnızca etkin bir sayfa Grok kotalarını gösterirken sorar.",
       "s.quotas.pageSize": "Kartlar birer birer",
       "s.quotas.pageSizeHint": "0 = hepsini göster",
       "s.quotas.rotateInterval": "Her (saniyede) döndür",
