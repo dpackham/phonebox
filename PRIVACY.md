@@ -110,8 +110,9 @@ the Android app removes everything on the phone.
 ## Connections made by default
 
 Each of these servers sees your IP address, like any web request. PhoneBox sends none of them an identifier for you
-or your devices, with one exception: the update check can retry with your GitHub CLI token (see below), which
-identifies your GitHub account to GitHub.
+or your devices, with these exceptions: the update check can retry with your GitHub CLI token (see below), which
+identifies your GitHub account to GitHub, and the Claude and Grok quota checks send the sign-in token of that
+command-line tool, which identifies your account, to its own provider only.
 
 | What | Where | What is sent | How to turn it off |
 |---|---|---|---|
@@ -122,7 +123,7 @@ identifies your GitHub account to GitHub.
 | Air quality widget (phone) | `air-quality-api.open-meteo.com`, while the widget is on a page | The same coordinates | Remove the widget |
 | City search (settings page) | `geocoding-api.open-meteo.com` | The city name you type, only when you search | Don't search |
 | Claude quota | `api.anthropic.com/api/oauth/usage`, every 3 minutes after a successful check (sooner after a failed one, as often as every 30 seconds while the network is down; less often when Anthropic asks it to wait; agents running on this computer share one schedule) while Claude Code is signed in on this computer, whether or not a page shows a quota widget | The OAuth token Claude Code stores in `~/.claude/.credentials.json`, or on macOS, when that file doesn't exist, the "Claude Code-credentials" item from the default keychain search list (normally the login Keychain), read with `security find-generic-password`; read-only, PhoneBox never refreshes it. Only the Claude Code command-line sign-in is used; the Claude Desktop app's own sign-in is never read | No switch yet: it stops when Claude Code is signed out on this computer |
-| Grok quota | `cli-chat-proxy.grok.com/v1/billing?format=credits` and, for the plan name only, `cli-chat-proxy.grok.com/v1/settings` (that second request gives up after 2 seconds), every 3 minutes after a successful check (sooner after a failed one, as often as every 30 seconds while the network is down) while the Grok CLI is signed in on this computer, whether or not a page shows a quota widget | The bearer token the Grok CLI stores in `~/.grok/auth.json` (`GROK_HOME` overrides that folder); read-only, PhoneBox never refreshes it and never sends it to the phone | No switch yet: it stops when that sign-in is missing or expired |
+| Grok quota | `cli-chat-proxy.grok.com/v1/billing?format=credits` and, for the plan name only, `cli-chat-proxy.grok.com/v1/settings` (that second request gives up after 2 seconds), every 3 minutes after a successful check (sooner after a failed one, as often as every 30 seconds while the network is down) while the Grok CLI is signed in on this computer, whether or not a page shows a quota widget | The bearer token the Grok CLI stores in `~/.grok/auth.json` (`GROK_HOME` overrides that folder); read-only, PhoneBox never refreshes it and never sends it to the phone | Untick **Grok** in **Settings › General › AI quotas & CodexBar** (ticked by default): the auth file is then not read and nothing is sent. It also stops when that sign-in is missing or expired |
 
 ## Connections made only when you use a feature
 

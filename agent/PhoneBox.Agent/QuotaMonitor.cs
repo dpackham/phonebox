@@ -209,9 +209,11 @@ public sealed partial class QuotaMonitor(ConfigStore config, ILogger<QuotaMonito
         if (grok is not null) _grok = grok;
     }
 
-    public IReadOnlyList<QuotaProvider> Snapshot()
+    public IReadOnlyList<QuotaProvider> Snapshot() => Snapshot(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+
+    /// <summary>The snapshot at <paramref name="now"/>; tests pass their own clock so windows roll the same way every day.</summary>
+    internal IReadOnlyList<QuotaProvider> Snapshot(long now)
     {
-        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var external = _external;
         var core = new[] { "claude", "codex", "antigravity", "grok" }
             .Select(id => id switch
@@ -252,6 +254,9 @@ public sealed partial class QuotaMonitor(ConfigStore config, ILogger<QuotaMonito
     internal QuotaOverview? Overview(long now) => CodexBar.SelectOverview(_overview, IsOverviewEnabled(), now);
 
     /// <summary>Returns true when live Codex CLI polling is opted in and an enabled page shows Codex quotas.</summary>
+    /// <summary>Grok is polled while it is ticked in AI quotas (it is by default). Unit tests without a config poll it.</summary>
+    internal bool IsGrokEnabled() => config is null || config.Get().CodexBar.Providers.Contains("grok");
+
     internal bool IsCodexLiveEnabled() => config is null || (config.Get() is { } c && c.CodexBar.CodexLiveQuota && c.ShowCodexQuota());
 
     internal const long CodexLiveIntervalMs = 180_000;

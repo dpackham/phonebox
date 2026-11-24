@@ -33,6 +33,12 @@ public sealed partial class QuotaMonitor
     /// </summary>
     internal async Task GrokTickAsync(long nowMs, CancellationToken ct)
     {
+        // Unticking Grok in AI quotas is the switch: the auth file is not read and nothing is sent.
+        if (!IsGrokEnabled())
+        {
+            _grok = null;
+            return;
+        }
         if (_grokNextAt - nowMs > GrokMaxWaitMs) _grokNextAt = nowMs;
         if (nowMs < _grokNextAt) return;
 
@@ -70,7 +76,10 @@ public sealed partial class QuotaMonitor
             return;
         }
 
+        var started = Environment.TickCount64;
         var (result, retryAfter) = await FetchGrok(signIn, nowMs, ct);
+        // Retry-After counts from the answer, not from when the request left.
+        var answeredMs = nowMs + Math.Max(0, Environment.TickCount64 - started);
         long next;
         switch (result)
         {
@@ -90,7 +99,7 @@ public sealed partial class QuotaMonitor
                 next = nowMs + GrokUnrecognizedMs;
                 break;
             case GrokResult.Limited:
-                next = nowMs + (long)Math.Clamp((retryAfter ?? TimeSpan.FromMinutes(5)).TotalMilliseconds, 0, 3_600_000);
+                next = answeredMs + (long)Math.Clamp((retryAfter ?? TimeSpan.FromMinutes(5)).TotalMilliseconds, 0, 3_600_000);
                 _grok = KeepGrok(signIn.PlanFallback, $"Grok is limiting quota checks; trying again at {DateTimeOffset.FromUnixTimeMilliseconds(next).ToLocalTime():HH:mm}");
                 break;
             default:

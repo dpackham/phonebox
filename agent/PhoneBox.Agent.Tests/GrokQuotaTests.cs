@@ -128,14 +128,14 @@ public sealed class GrokQuotaTests : IDisposable
             : Json("""{"config":{"creditUsagePercent":41.5,"subscriptionTier":"supergrok","currentPeriod":{"start":"2026-11-17T22:00:00Z","end":"2026-11-24T22:00:00Z"},"productUsage":[{"product":"GrokBuild","usagePercent":30},{"product":"GrokChat","usagePercent":11.5}],"prepaidBalance":{"val":1446}}}""");
         await agent.GrokTickAsync(Now, default);
 
-        var grok = Assert.Single(agent.Snapshot(), p => p.Id == "grok");
+        var grok = Assert.Single(agent.Snapshot(Now), p => p.Id == "grok");
         Assert.Equal("SuperGrok Heavy", grok.Plan);
         Assert.Equal("Weekly", Assert.Single(grok.Limits).Label);
         Assert.Equal(41.5, grok.Limits[0].Percent);
         Assert.Equal(2, http.Urls.Count);
         Assert.All(http.Tokens, t => Assert.Equal(Token, t));
         Assert.All(http.Marks, m => Assert.Equal("xai-grok-cli", m));
-        var published = JsonSerializer.Serialize(agent.Snapshot(), ConfigStore.WriteOpts);
+        var published = JsonSerializer.Serialize(agent.Snapshot(Now), ConfigStore.WriteOpts);
         Assert.DoesNotContain(Token, published, StringComparison.Ordinal);
         Assert.DoesNotContain("person@example.test", published, StringComparison.Ordinal);
         Assert.DoesNotContain(log.Lines, line => line.Contains(Token, StringComparison.Ordinal));
@@ -152,7 +152,7 @@ public sealed class GrokQuotaTests : IDisposable
         http.Reply = _ => throw new InvalidOperationException("the expired token was sent");
         await agent.GrokTickAsync(Now, default);
         Assert.Empty(http.Urls);
-        var grok = Assert.Single(agent.Snapshot(), p => p.Id == "grok");
+        var grok = Assert.Single(agent.Snapshot(Now), p => p.Id == "grok");
         Assert.Contains("expired", grok.Error, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -165,7 +165,7 @@ public sealed class GrokQuotaTests : IDisposable
         await agent.GrokTickAsync(Now, default);
         await agent.GrokTickAsync(Now + 60_000, default);
         Assert.Single(http.Urls);
-        Assert.Contains("did not accept", Assert.Single(agent.Snapshot(), p => p.Id == "grok").Error, StringComparison.Ordinal);
+        Assert.Contains("did not accept", Assert.Single(agent.Snapshot(Now), p => p.Id == "grok").Error, StringComparison.Ordinal);
         Assert.DoesNotContain(log.Lines, line => line.Contains(Token, StringComparison.Ordinal));
     }
 
@@ -174,12 +174,12 @@ public sealed class GrokQuotaTests : IDisposable
     {
         var (agent, http, _) = Agent();
         await agent.GrokTickAsync(Now, default);
-        Assert.DoesNotContain(agent.Snapshot(), p => p.Id == "grok");
+        Assert.DoesNotContain(agent.Snapshot(Now), p => p.Id == "grok");
         Assert.Empty(http.Urls);
 
         WriteAuth("{}");
         await agent.GrokTickAsync(Now + GrokQuotaTests.Wait, default);
-        Assert.Contains("Not signed in", Assert.Single(agent.Snapshot(), p => p.Id == "grok").Error, StringComparison.Ordinal);
+        Assert.Contains("Not signed in", Assert.Single(agent.Snapshot(Now), p => p.Id == "grok").Error, StringComparison.Ordinal);
         Assert.Empty(http.Urls);
     }
 
@@ -206,12 +206,12 @@ public sealed class GrokQuotaTests : IDisposable
         var local = new QuotaProvider("grok", "Grok", "SuperGrok", [new QuotaLimit("Weekly", 10, null, 604800, "normal")], null, now, null);
         var fresh = new QuotaProvider("grok", "Grok", "CodexBar", [new QuotaLimit("Weekly", 99, null, 604800, "normal")], null, now, null, Source: "codexbar");
         agent.SetStateForTest(grok: local, external: [fresh]);
-        Assert.Equal(99, Assert.Single(agent.Snapshot(), p => p.Id == "grok").Limits[0].Percent);
+        Assert.Equal(99, Assert.Single(agent.Snapshot(now), p => p.Id == "grok").Limits[0].Percent);
 
         var stale = fresh with { UpdatedAt = now - 700_000 };
         agent.SetStateForTest(grok: local, external: [stale]);
-        Assert.Equal(10, Assert.Single(agent.Snapshot(), p => p.Id == "grok").Limits[0].Percent);
-        Assert.Single(agent.Snapshot(), p => p.Id == "grok");
+        Assert.Equal(10, Assert.Single(agent.Snapshot(now), p => p.Id == "grok").Limits[0].Percent);
+        Assert.Single(agent.Snapshot(now), p => p.Id == "grok");
     }
 
     private static HttpResponseMessage Json(string body)
@@ -219,6 +219,21 @@ public sealed class GrokQuotaTests : IDisposable
         var res = new HttpResponseMessage(HttpStatusCode.OK);
         res.Content = new StringContent(body, Encoding.UTF8, "application/json");
         return res;
+    }
+
+    [Fact]
+    public async Task UntickingGrokInAiQuotasStopsTheCheck()
+    {
+        WriteReady();
+        var path = Path.Combine(_root, "config.json");
+        File.WriteAllText(path, """{"codexBar":{"providers":["claude","codex"]}}""");
+        var http = new Script { Reply = _ => Json("""{"config":{"creditUsagePercent":10}}""") };
+        var agent = new QuotaMonitor(new ConfigStore(path), new ListLog()) { GrokAuthPath = Path.Combine(_root, "auth.json"), HttpHandler = http };
+
+        await agent.GrokTickAsync(Now, default);
+
+        Assert.Empty(http.Urls);
+        Assert.DoesNotContain(agent.Snapshot(Now), p => p.Id == "grok");
     }
 
     private sealed class Script : HttpMessageHandler

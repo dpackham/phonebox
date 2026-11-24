@@ -132,6 +132,37 @@ public sealed class GrokSessionTests : IDisposable
         Assert.Null(session.TotalTokens);
     }
 
+    [Fact]
+    public void AnUnreadableProjectFolderDoesNotHideTheOthers()
+    {
+        if (OperatingSystem.IsWindows()) return; // folder permissions are tested where chmod applies
+        var dir = SessionDir();
+        Write(dir, "summary.json", Summary());
+        Write(dir, "events.jsonl", Event("turn_started"));
+        var locked = Path.Combine(_root, "sessions", "%2Fwork%2Flocked");
+        Directory.CreateDirectory(Path.Combine(locked, "22222222-3333-4444-5555-666666666666"));
+        File.SetUnixFileMode(locked, UnixFileMode.None);
+        try
+        {
+            var session = Assert.Single(_monitor.ReadGrok(_root, (_, _) => false));
+            Assert.Equal("grok:" + Id, session.Id);
+        }
+        finally
+        {
+            File.SetUnixFileMode(locked, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        }
+    }
+
+    [Fact]
+    public void APidStartThatIsNotUnixTimeOnlyChecksThePid()
+    {
+        using var self = System.Diagnostics.Process.GetCurrentProcess();
+        var startMicros = new DateTimeOffset(self.StartTime.ToUniversalTime()).ToUnixTimeMilliseconds() * 1000;
+        Assert.True(SessionMonitor.GrokSameProcess(self.Id, startMicros)); // macOS: Unix microseconds that match
+        Assert.False(SessionMonitor.GrokSameProcess(self.Id, startMicros - 3_600_000_000)); // a reused pid
+        Assert.True(SessionMonitor.GrokSameProcess(self.Id, 123_456_789)); // Linux-style clock ticks: not Unix time
+    }
+
     private string SessionDir()
     {
         var dir = Path.Combine(_root, "sessions", "%2Fwork%2Fphonebox", Id);

@@ -12,6 +12,8 @@ public sealed partial class SessionMonitor
     private static readonly TimeSpan GrokWindow = TimeSpan.FromHours(3);
     private static readonly TimeSpan GrokBusyWindow = TimeSpan.FromMinutes(3);
     private static readonly TimeSpan GrokStartSkew = TimeSpan.FromSeconds(2);
+    /// <summary>2001-09-09 in Unix microseconds. Clock ticks since boot stay far below it.</summary>
+    private const long GrokUnixMicrosFloor = 1_000_000_000_000_000;
 
     private string? _grokDiscoveryHome;
     private long _nextGrokDiscovery;
@@ -38,10 +40,15 @@ public sealed partial class SessionMonitor
             var found = new List<string>();
             foreach (var projectDir in Directory.EnumerateDirectories(root))
             {
-                foreach (var sessionDir in Directory.EnumerateDirectories(projectDir))
+                // A project folder that is removed or unreadable mid-scan must not hide the other projects.
+                try
                 {
-                    if (GrokNewest(sessionDir) is { } at && at > cutoff) found.Add(sessionDir);
+                    foreach (var sessionDir in Directory.EnumerateDirectories(projectDir))
+                    {
+                        if (GrokNewest(sessionDir) is { } at && at > cutoff) found.Add(sessionDir);
+                    }
                 }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
             }
             _grokSessionDirs = found.ToArray();
             _grokDiscoveryHome = home;
@@ -232,14 +239,18 @@ public sealed partial class SessionMonitor
             : root;
     }
 
-    /// <summary>The pid is the Grok process only when it is still running and started with the recorded time.</summary>
-    private static bool GrokSameProcess(int pid, long pidStartMicros)
+    /// <summary>
+    /// The pid is the Grok process only when it is still running and started with the recorded time. On macOS the
+    /// Grok CLI records the start as Unix microseconds. A smaller value is not a Unix time (on Linux it may be clock
+    /// ticks since boot), so only the running pid is checked then; a wrong guess would mark a live session stopped.
+    /// </summary>
+    internal static bool GrokSameProcess(int pid, long pidStartMicros)
     {
         try
         {
             using var process = Process.GetProcessById(pid);
             if (process.HasExited) return false;
-            if (pidStartMicros <= 0) return true;
+            if (pidStartMicros < GrokUnixMicrosFloor) return true;
             var expected = DateTimeOffset.FromUnixTimeMilliseconds(pidStartMicros / 1000);
             var actual = new DateTimeOffset(process.StartTime.ToUniversalTime());
             return (actual - expected).Duration() < GrokStartSkew;
