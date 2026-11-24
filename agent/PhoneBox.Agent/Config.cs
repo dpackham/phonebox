@@ -731,7 +731,8 @@ public sealed partial class ConfigStore(string path)
         c.Weather.Unit = WeatherUnitJsonConverter.Normalize(c.Weather.Unit);
         c.Weather.Model = WeatherModelJsonConverter.Normalize(c.Weather.Model);
         c.CodexBar ??= new();
-        c.CodexBar.Providers = (c.CodexBar.Providers ?? []).Where(p => p is "claude" or "codex" or "antigravity").Distinct().ToArray();
+        // The same ids as the checkboxes in settings.html (cb_claude, cb_codex, cb_antigravity, cb_grok).
+        c.CodexBar.Providers = (c.CodexBar.Providers ?? []).Where(p => p is "claude" or "codex" or "antigravity" or "grok").Distinct().ToArray();
         c.CodexBar.PageSize = Math.Clamp(c.CodexBar.PageSize, 0, 6);
         c.CodexBar.RotateInterval = Math.Clamp(c.CodexBar.RotateInterval, 2, 300);
         c.Night ??= new();
@@ -1132,7 +1133,7 @@ public sealed partial class ConfigStore(string path)
 
 public sealed class CodexBarConfig
 {
-    public string[] Providers { get; set; } = ["claude", "codex", "antigravity"];
+    public string[] Providers { get; set; } = ["claude", "codex", "antigravity", "grok"];
     public bool Rotate { get; set; } = true;
     public int PageSize { get; set; } = 2;
     public int RotateInterval { get; set; } = 8;

@@ -43,6 +43,13 @@ Last updated: 2026-11-20 (PhoneBox 0.9.6).
   details are open. A step is the tool name plus a file name, the program a command starts with (never the command
   line) or a web host; tool output, thinking and file contents are never sent. Nothing is stored on the phone or the
   computer. With the switch off the agent refuses the request and no prompt or reply text is sent.
+- **Grok sessions** (on, the same as Codex): the agent reads recent metadata under `~/.grok/sessions`
+  (or `GROK_HOME`) and `active_sessions.json`. The phone gets the project folder, status, model, reasoning
+  effort, token counters and times. Prompts, replies, generated titles, turn summaries and costs are not sent.
+  A session shows as working while its turn is still open and a metadata file was written in the last three
+  minutes, and as waiting while that turn is sitting on a permission prompt and the Grok process is still
+  running. Sessions with nothing written in the last three hours are skipped. This stays on this computer
+  except for the same local USB / paired Wi-Fi link as the rest of the panel.
 - **Cursor sessions** (off by default; **Settings › General › Cursor sessions**): while enabled, the agent scans recent
   `*.jsonl` files under `~/.cursor/projects/*/agent-transcripts` (about every 30 seconds for discovery) and reads a
   bounded tail of each file to parse the last record's `role` in memory. Only that role and the file times are kept for
@@ -115,6 +122,7 @@ identifies your GitHub account to GitHub.
 | Air quality widget (phone) | `air-quality-api.open-meteo.com`, while the widget is on a page | The same coordinates | Remove the widget |
 | City search (settings page) | `geocoding-api.open-meteo.com` | The city name you type, only when you search | Don't search |
 | Claude quota | `api.anthropic.com/api/oauth/usage`, every 3 minutes after a successful check (sooner after a failed one, as often as every 30 seconds while the network is down; less often when Anthropic asks it to wait; agents running on this computer share one schedule) while Claude Code is signed in on this computer, whether or not a page shows a quota widget | The OAuth token Claude Code stores in `~/.claude/.credentials.json`, or on macOS, when that file doesn't exist, the "Claude Code-credentials" item from the default keychain search list (normally the login Keychain), read with `security find-generic-password`; read-only, PhoneBox never refreshes it. Only the Claude Code command-line sign-in is used; the Claude Desktop app's own sign-in is never read | No switch yet: it stops when Claude Code is signed out on this computer |
+| Grok quota | `cli-chat-proxy.grok.com/v1/billing?format=credits` and, for the plan name only, `cli-chat-proxy.grok.com/v1/settings` (that second request gives up after 2 seconds), every 3 minutes after a successful check (sooner after a failed one, as often as every 30 seconds while the network is down) while the Grok CLI is signed in on this computer, whether or not a page shows a quota widget | The bearer token the Grok CLI stores in `~/.grok/auth.json` (`GROK_HOME` overrides that folder); read-only, PhoneBox never refreshes it and never sends it to the phone | No switch yet: it stops when that sign-in is missing or expired |
 
 ## Connections made only when you use a feature
 

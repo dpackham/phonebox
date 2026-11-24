@@ -18,6 +18,7 @@ public sealed record AgentSession(string Id, string Tool, string Name, string Pr
 /// Watches running AI coding sessions (local and read-only):
 ///  - Claude Code: ~/.claude/sessions/{pid}.json (status files written by Claude Code itself)
 ///  - Codex: the latest events in recent rollout files under ~/.codex/sessions
+///  - Grok: recent session metadata under ~/.grok/sessions (or GROK_HOME)
 ///  - Cursor (opt-in): recent agent transcripts under ~/.cursor/projects/*/agent-transcripts
 ///  - Antigravity (opt-in): recent user transcripts under ~/.gemini/antigravity/brain and ~/.gemini/antigravity-cli/brain
 ///  - OpenCode: recent sessions from the local HTTP API of its background service (native and in WSL)
@@ -75,6 +76,7 @@ public sealed partial class SessionMonitor(ILogger<SessionMonitor> log, ConfigSt
             var list = new List<AgentSession>();
             try { list.AddRange(ReadClaude(titles: ShareTitles)); } catch (Exception ex) { log.LogDebug("claude sessions: {Msg}", ex.Message); }
             try { list.AddRange(ReadCodex()); } catch (Exception ex) { log.LogDebug("codex sessions: {Msg}", ex.Message); }
+            try { list.AddRange(ReadGrok()); } catch (Exception ex) { log.LogDebug("grok sessions: {Msg}", ex.Message); }
             // OpenCode sessions are off until Settings › General › "Show OpenCode sessions" is enabled; while off,
             // the service is not read at all — not even the every-2-seconds GET.
             if (config?.Get().OpenCode.Sessions == true)

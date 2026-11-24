@@ -874,7 +874,9 @@ nav a.on::before { color: var(--accent); }
             <label class="check"><input type="checkbox" id="cb_claude"> Claude</label>
             <label class="check"><input type="checkbox" id="cb_codex"> Codex</label>
             <label class="check"><input type="checkbox" id="cb_antigravity"> Antigravity</label>
+            <label class="check"><input type="checkbox" id="cb_grok"> Grok</label>
           </div>
+          <span class="hint">Grok uses the Grok CLI sign-in on this computer (grok login). PhoneBox reads that token and does not refresh it.</span>
         </div>
         <div class="field" style="margin-top:10px">
           <label class="check"><input type="checkbox" data-bind="codexBar.rotate"> <span data-i18n="s.quotas.rotate">Rotate providers automatically</span></label>
@@ -1333,7 +1335,7 @@ function widgetSummary(w) {
     case 'button': return cfg.shortcuts.find((s) => s.id === o.id)?.label || 'pick a shortcut';
     case 'shortcuts': return (o.ids?.length ? `${o.ids.length} keys` : 'all keys') + ` · ${o.columns || 4} columns`;
     case 'worldclock': return (o.zones || d.options[0]?.default || []).map((z) => z.split('=')[0]).join(' · ');
-    case 'quotas': case 'codexbar': return (o.providers || ['claude', 'codex', 'antigravity']).join(' + ');
+    case 'quotas': case 'codexbar': return (o.providers || ['claude', 'codex', 'antigravity', 'grok']).join(' + ');
     case 'quotaring': return `${choice('provider')} · ${choice('limit').split(' (')[0]}`;
     case 'analog': return o.label || o.zone || '';
     case 'topprocs': case 'breathe': return choice(w.type === 'topprocs' ? 'sort' : 'pattern');
@@ -3706,16 +3708,16 @@ function bindForm() {
 }
 
 function bindCodexBar() {
-  cfg.codexBar ??= { providers: ['claude', 'codex', 'antigravity'], rotate: true, pageSize: 2, rotateInterval: 8 };
+  cfg.codexBar ??= { providers: ['claude', 'codex', 'antigravity', 'grok'], rotate: true, pageSize: 2, rotateInterval: 8 };
   if (cfg.codexBar.rotate === undefined) cfg.codexBar.rotate = true;
-  const provs = Array.isArray(cfg.codexBar.providers) ? cfg.codexBar.providers : ['claude', 'codex', 'antigravity'];
-  ['claude', 'codex', 'antigravity'].forEach((id) => {
+  const provs = Array.isArray(cfg.codexBar.providers) ? cfg.codexBar.providers : ['claude', 'codex', 'antigravity', 'grok'];
+  ['claude', 'codex', 'antigravity', 'grok'].forEach((id) => {
     const el = $('cb_' + id);
     if (!el) return;
     el.checked = provs.includes(id);
     el.onchange = () => {
       const cur = Array.isArray(cfg.codexBar.providers) ? cfg.codexBar.providers : [];
-      const next = ['claude', 'codex', 'antigravity'].filter((x) => x === id ? el.checked : cur.includes(x));
+      const next = ['claude', 'codex', 'antigravity', 'grok'].filter((x) => x === id ? el.checked : cur.includes(x));
       if (!next.length) { el.checked = true; toast(t('s.js.keepOneAi'), true); return; }
       cfg.codexBar.providers = next;
       changed();
@@ -3815,7 +3817,7 @@ async function loadInfo() {
 // hand-trimmed paste in Apply JSON — gets the same defaults a fresh load does before anything renders.
 function fillDefaults() {
   cfg.pages = fitPages(cfg.pages); cfg.shortcuts ??= []; cfg.rules ??= []; cfg.display ??= {}; cfg.display.wallpaper ??= { dim: 45, blur: 0 }; cfg.night = { enabled: true, start: '00:30', end: '07:30', brightness: 0.02, ...cfg.night }; cfg.weather ??= {}; cfg.weather.unit ??= 'celsius'; cfg.weather.model ??= ''; cfg.photos ??= { source: 'folder', folder: '', subfolders: true, immichUrl: '', immichKey: '', immichAlbum: '', immichAlbumName: '' }; cfg.lan ??= { enabled: false, port: 8766 }; cfg.updates ??= { auto: true, repo: 'ersinkoc/phonebox' }; cfg.claude ??= { phoneApprovals: true, timeoutSec: 90, onlyWhenAway: false, shareSessionTitles: false, shareConversation: false, watchWsl: false }; cfg.opencode ??= { phoneApprovals: false, timeoutSec: 90, onlyWhenAway: false, alwaysCountdownSec: 10, watchWsl: false, shareSessionTitles: false, sessions: false };
-  cfg.codexBar ??= { providers: ['claude', 'codex', 'antigravity'], rotate: true, pageSize: 2, rotateInterval: 8 };
+  cfg.codexBar ??= { providers: ['claude', 'codex', 'antigravity', 'grok'], rotate: true, pageSize: 2, rotateInterval: 8 };
   for (const [k, v] of Object.entries({ language: 'auto', hour12: false, idleReturnSec: 90, switchCountdownSec: 3, touchGraceSec: 20, minDwellSec: 15, holdMaxMin: 30, keepAwake: true, openOnConnect: true,
     showSeconds: true, vibrate: true, finishToast: true, finishSound: false, finishSoundVolume: 70, volumeKeys: true, artTint: true, nightWhenUnreachable: false, unreachableNightDelayMin: 5, proximityWake: true, orientation: 'landscape', theme: 'default', accent: '#2dd4bf' })) cfg.display[k] ??= v;
   cfg.charge ??= { enabled: false, min: 50, max: 80, method: 'ha' };

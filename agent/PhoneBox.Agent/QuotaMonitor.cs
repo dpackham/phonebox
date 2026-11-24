@@ -31,6 +31,8 @@ public sealed record QuotaProvider(string Id, string Name, string Plan, IReadOnl
 ///    Claude Code refreshes it itself (refreshing it here could break Claude Code's session).
 ///  - Codex: live account quota through the signed-in Codex CLI app-server, with local session logs as fallback.
 ///  - Antigravity: a running local server, or the signed-in agy CLI's structured /usage command.
+///  - Grok: cli-chat-proxy.grok.com with the bearer from ~/.grok/auth.json (GROK_HOME overrides that folder).
+///    The token is only read and never refreshed; the Grok CLI refreshes it itself.
 /// </summary>
 public sealed partial class QuotaMonitor(ConfigStore config, ILogger<QuotaMonitor> log) : BackgroundService
 {
@@ -200,22 +202,28 @@ public sealed partial class QuotaMonitor(ConfigStore config, ILogger<QuotaMonito
     private volatile QuotaOverview? _overview;
 
     /// <summary>Seeds quota state in unit tests without running background loops.</summary>
-    internal void SetStateForTest(QuotaProvider? claude = null, IReadOnlyList<QuotaProvider>? external = null)
+    internal void SetStateForTest(QuotaProvider? claude = null, IReadOnlyList<QuotaProvider>? external = null, QuotaProvider? grok = null)
     {
         _claude = claude;
         if (external is not null) _external = external;
+        if (grok is not null) _grok = grok;
     }
 
     public IReadOnlyList<QuotaProvider> Snapshot()
     {
         var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var external = _external;
-        var core = new[] { "claude", "codex", "antigravity" }
-            .Select(id => id == "codex" ? CodexSnapshot(now, external.FirstOrDefault(p => p.Id == id))
-                : CodexBar.Select(id == "claude" ? _claude : _antigravity, external.FirstOrDefault(p => p.Id == id), now))
+        var core = new[] { "claude", "codex", "antigravity", "grok" }
+            .Select(id => id switch
+            {
+                "codex" => CodexSnapshot(now, external.FirstOrDefault(p => p.Id == id)),
+                "claude" => CodexBar.Select(_claude, external.FirstOrDefault(p => p.Id == id), now),
+                "grok" => CodexBar.Select(_grok, external.FirstOrDefault(p => p.Id == id), now),
+                _ => CodexBar.Select(_antigravity, external.FirstOrDefault(p => p.Id == id), now),
+            })
             .OfType<QuotaProvider>();
         var extra = external
-            .Where(p => p.Id is not ("claude" or "codex" or "antigravity"))
+            .Where(p => p.Id is not ("claude" or "codex" or "antigravity" or "grok"))
             .Select(p => CodexBar.Select(null, p, now))
             .OfType<QuotaProvider>();
         return core.Concat(extra).Select(p => Rolled(p, now)).ToList();
@@ -430,7 +438,10 @@ public sealed partial class QuotaMonitor(ConfigStore config, ILogger<QuotaMonito
 
             try { await ClaudeTickAsync(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), ct); }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
-            catch (Exception ex) { log.LogWarning("claude quota: {Msg}", ex.Message); } // never end the loop for Codex and Antigravity
+            catch (Exception ex) { log.LogWarning("claude quota: {Msg}", ex.Message); } // never end the loop for Codex, Antigravity and Grok
+            try { await GrokTickAsync(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), ct); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { return; }
+            catch (Exception ex) { log.LogWarning("grok quota: {Msg}", ex.Message); }
             // Zero when the CodexBar deadline has already passed (do not sleep another 30 s); otherwise min(30 s, remaining).
             var untilCodex = Math.Max(0L, _nextCodexBar - Environment.TickCount64);
             var wait = TimeSpan.FromMilliseconds(Math.Min(30_000L, untilCodex));
