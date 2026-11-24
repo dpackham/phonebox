@@ -355,7 +355,7 @@ public sealed class PageConfig
     public bool Enabled { get; set; } = true;
     /// <summary>Return home after this many idle seconds on this page; null = the display setting, 0 = stay.</summary>
     public int? IdleSec { get; set; }
-    /// <summary>Widgets on a 12 x 6 grid.</summary>
+    /// <summary>Widgets on a 12-column grid: 6 rows on a phone, more on a tablet (up to <see cref="Catalog.MaxRows"/>).</summary>
     public List<WidgetConfig>? Widgets { get; set; }
 
     /// <summary>Create the page from this template (templates.json) when it has no widgets yet.</summary>
@@ -1005,9 +1005,9 @@ public sealed partial class ConfigStore(string path)
                 w.Appearance?.Normalize(widget: true);
                 var (minW, minH) = Catalog.MinSize(w.Type);
                 w.W = Math.Clamp(w.W, Math.Min(minW, Catalog.Cols), Catalog.Cols);
-                w.H = Math.Clamp(w.H, Math.Min(minH, Catalog.Rows), Catalog.Rows);
+                w.H = Math.Clamp(w.H, Math.Min(minH, Catalog.MaxRows), Catalog.MaxRows);
                 w.X = Math.Clamp(w.X, 0, Catalog.Cols - w.W);
-                w.Y = Math.Clamp(w.Y, 0, Catalog.Rows - w.H);
+                w.Y = Math.Clamp(w.Y, 0, Catalog.MaxRows - w.H);
                 w.Id = reservedWidgets.TryGetValue(w, out var reservedWidget)
                     ? reservedWidget : UniqueLayoutId(LayoutId(w.Type, w.Type), widgetIds);
                 widgets.Add(w);
