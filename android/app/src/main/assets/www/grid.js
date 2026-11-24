@@ -19,13 +19,15 @@ const PAD_Y = 27;
 /**
  * @param {number} width viewport width, CSS pixels
  * @param {number} height viewport height, CSS pixels
+ * @param {{ tabletRows?: boolean }} [options] tabletRows: Settings › Display › More rows on a tablet (off by default).
+ *   Off, every screen keeps the 12 × 6 page and portrait packs into 6 columns, as before the setting existed.
  * @returns {{ cols: number, rows: number, tablet: boolean, portrait: boolean }}
  */
-export function gridForViewport(width, height) {
+export function gridForViewport(width, height, { tabletRows = false } = {}) {
   const w = Math.max(1, Number(width) || 1);
   const h = Math.max(1, Number(height) || 1);
   const portrait = h > w * 1.05;
-  const tablet = Math.min(w, h) >= TABLET_MIN_PX;
+  const tablet = tabletRows && Math.min(w, h) >= TABLET_MIN_PX;
   // Upright: pack into columns that keep a cell about as wide as on a phone in landscape.
   // A phone stays at 6; a tablet has room for the full 12, so two phone-width widgets sit side by side.
   if (portrait) return { cols: tablet ? PHONE_COLS : 6, rows: PHONE_ROWS, tablet, portrait: true };
@@ -37,10 +39,10 @@ export function gridForViewport(width, height) {
 }
 
 /** The landscape grid for this screen, including when the device is held upright. */
-export function designGrid(width, height) {
+export function designGrid(width, height, options) {
   const w = Math.max(1, Number(width) || 1);
   const h = Math.max(1, Number(height) || 1);
-  return gridForViewport(Math.max(w, h), Math.min(w, h));
+  return gridForViewport(Math.max(w, h), Math.min(w, h), options);
 }
 
 /** Where a saved widget sits on a cols×rows page. Null when it starts outside the page (a tablet row on a phone). */

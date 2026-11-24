@@ -755,6 +755,8 @@ nav a.on::before { color: var(--accent); }
         <div class="field" style="max-width:420px"><label data-i18n="s.display.orientation">Orientation</label>
           <select data-bind="display.orientation"><option value="landscape" data-i18n="s.display.orientation.landscape">Landscape</option><option value="portrait" data-i18n="s.display.orientation.portrait">Portrait</option><option value="auto" data-i18n="s.display.orientation.auto">Follow the phone</option></select>
           <span class="hint" data-i18n="s.display.orientationHint">You design pages in landscape; in portrait the panel arranges the widgets by itself, top to bottom. Tablets use the same pages, just bigger.</span></div>
+        <label class="check"><input type="checkbox" data-bind="display.tabletRows" id="tabletRowsOpt"> <span data-i18n="s.display.tabletRows">More rows on a tablet</span></label>
+        <span class="hint" style="display:block;margin:-4px 0 10px" data-i18n="s.display.tabletRowsHint">A landscape tablet keeps the 12 columns and gets more rows (about 8 to 10, from its screen), so a page holds more widgets; upright, it packs 12 across. Widgets below the top 6 rows show only on a tablet: a phone leaves them out without a sign. Update the PhoneBox app on the tablet first, as an older app squeezes those widgets onto extra rows.</span>
         <div class="field" style="max-width:420px"><label data-i18n="s.display.timeFormat">Time format</label>
           <select data-bind="display.hour12" data-type="hour12"><option value="false" data-i18n="s.display.h24">24-hour (14:05)</option><option value="true" data-i18n="s.display.h12">12-hour (2:05 PM)</option><option value="auto" data-i18n="s.display.orientation.auto">Follow the phone</option></select></div>
         <label class="check"><input type="checkbox" data-bind="display.showSeconds"> <span data-i18n="s.display.showSeconds">Show seconds on the clock</span></label>
@@ -1268,7 +1270,9 @@ const EDITOR_SCREENS = {
 let editorScreenId = 'phone';
 try { editorScreenId = localStorage.getItem('pb-editor-screen') || 'phone'; } catch (_) {}
 if (!EDITOR_SCREENS[editorScreenId]) editorScreenId = 'phone';
-const editorScreen = () => EDITOR_SCREENS[editorScreenId];
+// Without Settings › Display › More rows on a tablet, every screen shows the phone page, so the editor does too.
+const tabletRowsOn = () => cfg?.display?.tabletRows === true;
+const editorScreen = () => EDITOR_SCREENS[tabletRowsOn() ? editorScreenId : 'phone'];
 const gridCols = () => editorScreen().cols;
 const gridRows = () => editorScreen().rows;
 let selPage = 0;
@@ -1538,6 +1542,7 @@ window.addEventListener('message', (e) => {
   sendPreview();
 });
 for (const b of $('stageSeg').children) b.onclick = () => setStage(b.dataset.v);
+$('tabletRowsOpt')?.addEventListener('change', () => { if (cfg) { renderCanvas(); if (selWidget >= 0) renderInspector(); } });
 for (const b of $('screenSeg').children) b.onclick = () => {
   if (!EDITOR_SCREENS[b.dataset.screen]) return;
   editorScreenId = b.dataset.screen;
@@ -1575,7 +1580,12 @@ function applyEditorScreen() {
     fitPreview();
   }
   const seg = $('screenSeg');
-  if (seg) for (const b of seg.children) b.classList.toggle('on', b.dataset.screen === editorScreenId);
+  if (seg) {
+    seg.hidden = !tabletRowsOn();
+    for (const b of seg.children) b.classList.toggle('on', b.dataset.screen === editorScreenId);
+  }
+  const screenHint = $('screenHint');
+  if (screenHint) screenHint.hidden = !tabletRowsOn();
 }
 
 function fitPreview() {
@@ -1630,7 +1640,8 @@ function renderCanvas() {
     canvas.appendChild(el);
   });
   const hint = $('screenHint');
-  if (hint) hint.textContent = t('s.pages.screenHint') + (hidden ? ' ' + t('s.pages.screenHidden', { n: hidden }) : '');
+  if (hint) hint.hidden = !tabletRowsOn() && !hidden; // widgets left on tablet rows still get counted with the setting off
+  if (hint) hint.textContent = t('s.pages.screenHint') + ' ' + t('s.pages.screenRowsVary') + (hidden ? ' ' + t('s.pages.screenHidden', { n: hidden }) : '');
 }
 
 function startDrag(e, w, i, mode) {
@@ -1647,14 +1658,16 @@ function startDrag(e, w, i, mode) {
   const onMove = (ev) => {
     const dx = Math.round((ev.clientX - sx) / cw), dy = Math.round((ev.clientY - sy) / ch);
     let { x, y, w: ww, h: hh } = s;
-    // Only clamp the axis the pointer moved. A widget that runs onto tablet rows is drawn clipped in Phone view;
-    // clamping an unmoved axis to the visible rows would quietly move or shorten its saved tablet layout.
+    // Only clamp the axis the pointer moved. A widget that runs onto rows this view does not show is drawn clipped,
+    // and its saved place there belongs to a taller screen: it does not move or resize vertically here, because
+    // clamping it to the visible rows would quietly move or shorten it on the tablet.
+    const clipped = s.y + s.h > rows;
     if (mode === 'move') {
       if (dx) x = Math.max(0, Math.min(cols - ww, s.x + dx));
-      if (dy) y = Math.max(0, Math.min(rows - hh, s.y + dy));
+      if (dy && !clipped) y = Math.max(0, Math.min(rows - hh, s.y + dy));
     } else {
       if (dx) ww = Math.max(Math.min(d.minW, cols), Math.min(cols - s.x, s.w + dx));
-      if (dy) hh = Math.max(Math.min(d.minH, rows), Math.min(rows - s.y, s.h + dy));
+      if (dy && !clipped) hh = Math.max(Math.min(d.minH, rows), Math.min(rows - s.y, s.h + dy));
     }
     if ((x !== w.x || y !== w.y || ww !== w.w || hh !== w.h) && !overlaps(p, w, x, y, ww, hh)) {
       Object.assign(w, { x, y, w: ww, h: hh });
@@ -1711,7 +1724,9 @@ function renderInspector() {
     h('input', { type: 'number', min, max, value: w[key], onchange: (e) => {
       const v = Math.max(min, Math.min(max, parseInt(e.target.value || '0', 10)));
       const n = { x: w.x, y: w.y, w: w.w, h: w.h, [key]: v };
-      if (n.x + n.w > gridCols() || n.y + n.h > gridRows() || overlaps(p, w, n.x, n.y, n.w, n.h)) { toast(t('s.js.doesNotFit'), true); e.target.value = w[key]; return; }
+      // Check the axis being edited: a widget clipped by this view (it runs onto tablet rows) can still change its column.
+      const horizontal = key === 'x' || key === 'w';
+      if ((horizontal ? n.x + n.w > gridCols() : n.y + n.h > gridRows()) || overlaps(p, w, n.x, n.y, n.w, n.h)) { toast(t('s.js.doesNotFit'), true); e.target.value = w[key]; return; }
       w[key] = v; changed(); renderCanvas();
     } }));
   box.replaceChildren(
@@ -3886,7 +3901,7 @@ function fillDefaults() {
   cfg.pages = fitPages(cfg.pages); cfg.shortcuts ??= []; cfg.rules ??= []; cfg.display ??= {}; cfg.display.wallpaper ??= { dim: 45, blur: 0 }; cfg.night = { enabled: true, start: '00:30', end: '07:30', brightness: 0.02, ...cfg.night }; cfg.weather ??= {}; cfg.weather.unit ??= 'celsius'; cfg.weather.model ??= ''; cfg.photos ??= { source: 'folder', folder: '', subfolders: true, immichUrl: '', immichKey: '', immichAlbum: '', immichAlbumName: '' }; cfg.lan ??= { enabled: false, port: 8766 }; cfg.updates ??= { auto: true, repo: 'ersinkoc/phonebox' }; cfg.claude ??= { phoneApprovals: true, timeoutSec: 90, onlyWhenAway: false, shareSessionTitles: false, shareConversation: false, watchWsl: false }; cfg.opencode ??= { phoneApprovals: false, timeoutSec: 90, onlyWhenAway: false, alwaysCountdownSec: 10, watchWsl: false, shareSessionTitles: false, sessions: false };
   cfg.codexBar ??= { providers: ['claude', 'codex', 'antigravity'], rotate: true, pageSize: 2, rotateInterval: 8 };
   for (const [k, v] of Object.entries({ language: 'auto', hour12: false, idleReturnSec: 90, switchCountdownSec: 3, touchGraceSec: 20, minDwellSec: 15, holdMaxMin: 30, keepAwake: true, openOnConnect: true,
-    showSeconds: true, vibrate: true, finishToast: true, finishSound: false, finishSoundVolume: 70, volumeKeys: true, artTint: true, nightWhenUnreachable: false, unreachableNightDelayMin: 5, proximityWake: true, orientation: 'landscape', theme: 'default', accent: '#2dd4bf' })) cfg.display[k] ??= v;
+    showSeconds: true, vibrate: true, finishToast: true, finishSound: false, finishSoundVolume: 70, volumeKeys: true, artTint: true, nightWhenUnreachable: false, unreachableNightDelayMin: 5, proximityWake: true, orientation: 'landscape', tabletRows: false, theme: 'default', accent: '#2dd4bf' })) cfg.display[k] ??= v;
   cfg.charge ??= { enabled: false, min: 50, max: 80, method: 'ha' };
   cfg.steam ??= { enabled: false };
 }

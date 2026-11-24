@@ -1478,20 +1478,20 @@ export function portraitLayout(widgets, cols = 6) {
   return { pos, rows: Math.max(12, occ.length) };
 }
 
-let shownGrid = '';
+// Settings › Display › More rows on a tablet. Off by default, so an arranged tablet keeps its 12 × 6 pages.
+const gridOptions = () => ({ tabletRows: cfg.display?.tabletRows === true });
 
 export function buildLayout() {
   const enabled = (cfg.pages || []).filter((p) => p.enabled !== false && Array.isArray(p.widgets));
   const next = enabled.length ? enabled : FALLBACK_PAGES;
-  const viewport = gridForViewport(window.innerWidth, window.innerHeight);
+  const viewport = gridForViewport(window.innerWidth, window.innerHeight, gridOptions());
   const portrait = viewport.portrait;
-  shownGrid = `${viewport.cols}x${viewport.rows}:${portrait ? 'p' : 'l'}`;
-  const designed = designGrid(window.innerWidth, window.innerHeight);
+  const designed = designGrid(window.innerWidth, window.innerHeight, gridOptions());
   document.documentElement.style.setProperty('--pb-cols', String(designed.cols));
   document.documentElement.style.setProperty('--pb-rows', String(designed.rows));
   const h12 = hour12();
   // the active language belongs in the key: the widgets render their texts once, when they are created
-  const key = JSON.stringify([next, cfg.shortcuts, cfg.display?.showSeconds, cfg.display?.hour12, h12, cfg.display?.appearance, viewport.cols, viewport.rows, portrait, I18n?.getLang()]);
+  const key = JSON.stringify([next, cfg.shortcuts, cfg.display?.showSeconds, cfg.display?.hour12, h12, cfg.display?.appearance, viewport.cols, viewport.rows, designed.cols, designed.rows, portrait, I18n?.getLang()]);
   if (key === layoutKey) return;
   layoutKey = key;
   lastHour12 = h12;
@@ -1538,16 +1538,6 @@ export function buildLayout() {
   goPage(idx, true);
   requestAnimationFrame(() => setActive(true));
 }
-
-// Turning a tablet, or resizing the live preview, changes how many rows fit. Rebuild only when the grid changes.
-let gridResize = 0;
-window.addEventListener('resize', () => {
-  clearTimeout(gridResize);
-  gridResize = setTimeout(() => {
-    const g = gridForViewport(window.innerWidth, window.innerHeight);
-    if (`${g.cols}x${g.rows}:${g.portrait ? 'p' : 'l'}` !== shownGrid) buildLayout();
-  }, 150);
-});
 
 export function activeSet() { return new Set([curPage - 1, curPage, curPage + 1]); }
 export const pageOf = (kind) => mounted.filter((m) => m.pi === curPage && m.def.needs.includes(kind)).length > 0;
@@ -2000,7 +1990,7 @@ export function openOverview() {
   haptic();
   const ov = $('overview');
   const tile = (p, i) => {
-    const g = designGrid(window.innerWidth, window.innerHeight);
+    const g = designGrid(window.innerWidth, window.innerHeight, gridOptions());
     const map = h('div', 'ov-map', p.widgets.flatMap((w) => {
       const at = placeWidget(w, g.cols, g.rows);
       if (!at) return [];

@@ -317,6 +317,18 @@ public class ConfigTests
     }
 
     [Fact]
+    public void MoreRowsOnATabletIsOffByDefaultAndKeptWhenOn()
+    {
+        Assert.False(Load("{}").Display.TabletRows);
+        Assert.True(Load("""{ "display": { "tabletRows": true } }""").Display.TabletRows);
+        foreach (var name in new[] { "config.default.json", "config.default.linux.json", "config.default.macos.json" })
+        {
+            var path = Path.Combine(AppContext.BaseDirectory, name);
+            if (File.Exists(path)) Assert.False(Load(File.ReadAllText(path)).Display.TabletRows);
+        }
+    }
+
+    [Fact]
     public void AtLeastOnePageStaysEnabled()
     {
         var c = Load("""{ "pages": [ { "template": "clock", "enabled": false }, { "template": "music", "enabled": false } ] }""");
